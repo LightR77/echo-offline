@@ -1698,7 +1698,7 @@
       <section class="cloud-settings" aria-labelledby="cloud-title">
         <h4 id="cloud-title">云同步与社区榜（可选）</h4>
         <p class="help-caption">独立于天气与 Echo 网关。只同步本机档案、进行中的存档和单局成绩；自定义路线草案与 Echo 问答不上传，核心玩法始终离线。云端榜由客户端上报，未经服务器复核。</p>
-        <label class="network-row"><span><b>启用云同步</b><small>先填写有效的云服务地址；开启后上传存档与成绩，可手动下载云端存档</small></span><input type="checkbox" id="network-cloud" disabled title="请先填写有效的云服务地址"></label>
+        <label class="network-row"><span><b>启用云同步</b><small>默认使用 Echo-Offline 云服务，可修改地址；开启后上传存档与成绩，可手动下载云端存档</small></span><input type="checkbox" id="network-cloud" disabled title="请先填写有效的云服务地址"></label>
         <label class="network-endpoint" for="cloud-endpoint">云服务地址（HTTPS）<input id="cloud-endpoint" type="url" inputmode="url" placeholder="https://your-worker.example" autocomplete="off"><small>填写 Workers 服务根地址，不要加 /v1/。本机开发可用 http://localhost:8787。</small></label>
         <p id="cloud-account" class="help-caption" role="status" aria-live="polite"></p>
         <div class="loadbtns compact"><button class="ghost" id="cloud-upload" type="button" disabled>上传本机</button><button class="ghost" id="cloud-download" type="button" disabled>下载云端</button><button class="ghost danger" id="cloud-delete" type="button" disabled>删除云端账号</button></div>
@@ -5071,7 +5071,7 @@ if (typeof document !== "undefined"){
     forest:{ lat:30.34, lon:130.50, name:"屋久岛" },
     canyon:{ lat:36.05, lon:-112.12, name:"大峡谷南缘" }
   };
-  const DEFAULT_NETWORK = { echoOnline:false, weatherOnline:false, echoEndpoint:"", cloudEnabled:false, cloudEndpoint:"" };
+  const DEFAULT_NETWORK = { echoOnline:false, weatherOnline:false, echoEndpoint:"", cloudEnabled:false, cloudEndpoint:"https://echo-offline.lightrock112233.workers.dev" };
   function loadNetworkSettings(){
     try{
       const raw = JSON.parse(localStorage.getItem(NET_KEY));
@@ -5080,7 +5080,7 @@ if (typeof document !== "undefined"){
         weatherOnline:!!raw.weatherOnline,
         echoEndpoint:typeof raw.echoEndpoint === 'string' ? raw.echoEndpoint : "",
         cloudEnabled:!!raw.cloudEnabled,
-        cloudEndpoint:typeof raw.cloudEndpoint === 'string' ? raw.cloudEndpoint : ""
+        cloudEndpoint:typeof raw.cloudEndpoint === 'string' && raw.cloudEndpoint ? raw.cloudEndpoint : DEFAULT_NETWORK.cloudEndpoint
       };
     }catch{}
     return {...DEFAULT_NETWORK};
