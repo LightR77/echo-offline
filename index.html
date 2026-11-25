@@ -1216,6 +1216,10 @@
   #network-dialog .help-head,#legal-dialog .help-head,#quiz-dialog .help-head{padding:16px 20px 0}
   #network-dialog .help-head button,#legal-dialog .help-head button,#quiz-dialog .help-head button{min-height:34px;padding:5px 12px;border:1px solid rgba(255,255,255,.16);border-radius:9px;background:rgba(255,255,255,.06);color:#e9f2f2;font:inherit;font-size:11px;cursor:pointer}
   #network-dialog .help-head button:hover,#legal-dialog .help-head button:hover,#quiz-dialog .help-head button:hover{background:rgba(255,255,255,.11)}
+  .cloud-settings{margin-top:18px;padding-top:16px;border-top:1px solid rgba(255,255,255,.12)}
+  .cloud-settings h4{margin:0 0 8px;font-size:13px;letter-spacing:.04em}
+  .cloud-settings .danger{color:#ffd2c9}
+  .cloud-settings .is-error{color:#e8b79b}
   .quiz-body{padding:14px 20px 20px}
   .quiz-meta{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:0 0 10px;color:#93a8ae;font-size:10.5px;letter-spacing:.05em}
   .quiz-progress{display:flex;gap:4px;flex:1;max-width:220px}
@@ -1691,6 +1695,15 @@
       <label class="network-endpoint" for="network-endpoint">Echo 在线网关（可选，HTTPS）<input id="network-endpoint" type="url" inputmode="url" placeholder="https://your-server.example/echo" autocomplete="off"><small>网关需支持 CORS，接收 POST JSON 并返回 {answer, sources?}；密钥只放在服务端。留空时使用 Wikipedia 公开资料检索。</small></label>
       <p id="network-status" class="network-status" role="status" aria-live="polite"></p>
       <p class="help-caption">天气参考：<a href="https://open-meteo.com/" target="_blank" rel="noopener noreferrer">Open-Meteo</a>。在线内容可能错误或过时；紧急情况仍联系当地救援，不要把模拟天气当实况保障。</p>
+      <section class="cloud-settings" aria-labelledby="cloud-title">
+        <h4 id="cloud-title">云同步与社区榜（可选）</h4>
+        <p class="help-caption">独立于天气与 Echo 网关。只同步本机档案、进行中的存档和单局成绩；自定义路线草案与 Echo 问答不上传，核心玩法始终离线。云端榜由客户端上报，未经服务器复核。</p>
+        <label class="network-row"><span><b>启用云同步</b><small>先填写有效的云服务地址；开启后上传存档与成绩，可手动下载云端存档</small></span><input type="checkbox" id="network-cloud" disabled title="请先填写有效的云服务地址"></label>
+        <label class="network-endpoint" for="cloud-endpoint">云服务地址（HTTPS）<input id="cloud-endpoint" type="url" inputmode="url" placeholder="https://your-worker.example" autocomplete="off"><small>填写 Workers 服务根地址，不要加 /v1/。本机开发可用 http://localhost:8787。</small></label>
+        <p id="cloud-account" class="help-caption" role="status" aria-live="polite"></p>
+        <div class="loadbtns compact"><button class="ghost" id="cloud-upload" type="button" disabled>上传本机</button><button class="ghost" id="cloud-download" type="button" disabled>下载云端</button><button class="ghost danger" id="cloud-delete" type="button" disabled>删除云端账号</button></div>
+        <p class="help-caption">下载会替换本机档案与进行中的存档，操作前会再次确认。设备凭证只保存在本机；清除浏览器数据会失去该匿名账号的访问凭证。云同步需通过 HTTPS 页面或本机 HTTP 打开；直接双击 file:// 文件时浏览器会阻止跨域同步，核心玩法不受影响。</p>
+      </section>
       <div class="loadbtns"><button class="ghost" id="network-cancel" type="button">取消</button><button class="big" id="network-save" type="button">应用模式</button></div>
     </div>
   </dialog>
@@ -4888,7 +4901,7 @@ if (typeof document !== "undefined"){
   document.body.dataset.pageHidden = String(document.hidden);
   let S = null;
   let lastLoadout = Object.assign({}, Core.DEFAULT_LOADOUT);
-  let rankFilter = 'all';
+  let rankFilter = 'all', rankCloud = false;
   let mapFrame = 0, mapRoute = 'mountain', mapReturn = null;
   const mapView = {scale:1,x:0,y:0};
   let mapDrag = null, mapPinch = null;
@@ -4904,16 +4917,23 @@ if (typeof document !== "undefined"){
     if(!S || S.over || S.screen !== 'leg') return;
     try{ localStorage.setItem(RUN_SAVE_KEY, JSON.stringify({v:1,at:Date.now(),state:S})); }catch{}
   }
+  function validRunCheckpoint(raw){
+    try{
+      const st = raw && raw.v === 1 ? raw.state : null;
+      const route = st && ROUTES[st.routeId];
+      if(!route || st.over || st.screen !== 'leg' || !Number.isSafeInteger(st.leg) || st.leg < 1 || st.leg > route.rows.length) return false;
+      if(!Array.isArray(st.weatherRolls) || st.weatherRolls.length !== route.rows.length || !st.weatherRolls.every(Number.isFinite)) return false;
+      if(!Array.isArray(st.accidentRolls) || st.accidentRolls.length !== route.rows.length || !st.accidentRolls.every(Number.isFinite)) return false;
+      if(!Array.isArray(st.log) || !Array.isArray(st.environment) || !Array.isArray(st.echoes) || !st.items || typeof st.items !== 'object' || Array.isArray(st.items) || !st.flags || typeof st.flags !== 'object') return false;
+      if(![st.stamina,st.water,st.temp,st.elapsed,st.waste,st.lowestTemp,st.lowestStamina,st.day,st.time].every(Number.isFinite)) return false;
+      if(!st.log.every(l=>l && Number.isFinite(l.alt) && Number.isFinite(l.day) && Number.isFinite(l.leg) && typeof l.card === 'string' && typeof l.choice === 'string')) return false;
+      return !Core.inventoryError(st);
+    }catch{ return false; }
+  }
   function loadRunCheckpoint(){
     try{
       const raw = JSON.parse(localStorage.getItem(RUN_SAVE_KEY));
-      const st = raw && raw.v === 1 ? raw.state : null;
-      const route = st && ROUTES[st.routeId];
-      if(!route || st.over || st.screen !== 'leg') return null;
-      if(!Number.isSafeInteger(st.leg) || st.leg < 1 || st.leg > route.rows.length) return null;
-      if(!Array.isArray(st.weatherRolls) || st.weatherRolls.length !== route.rows.length) return null;
-      if(Core.inventoryError(st)) return null;
-      return st;
+      return validRunCheckpoint(raw) ? raw.state : null;
     }catch{ return null; }
   }
   function clearRunCheckpoint(){ try{ localStorage.removeItem(RUN_SAVE_KEY); }catch{} }
@@ -5051,14 +5071,16 @@ if (typeof document !== "undefined"){
     forest:{ lat:30.34, lon:130.50, name:"屋久岛" },
     canyon:{ lat:36.05, lon:-112.12, name:"大峡谷南缘" }
   };
-  const DEFAULT_NETWORK = { echoOnline:false, weatherOnline:false, echoEndpoint:"" };
+  const DEFAULT_NETWORK = { echoOnline:false, weatherOnline:false, echoEndpoint:"", cloudEnabled:false, cloudEndpoint:"" };
   function loadNetworkSettings(){
     try{
       const raw = JSON.parse(localStorage.getItem(NET_KEY));
       if(raw && typeof raw === 'object') return {
         echoOnline:!!raw.echoOnline,
         weatherOnline:!!raw.weatherOnline,
-        echoEndpoint:typeof raw.echoEndpoint === 'string' ? raw.echoEndpoint : ""
+        echoEndpoint:typeof raw.echoEndpoint === 'string' ? raw.echoEndpoint : "",
+        cloudEnabled:!!raw.cloudEnabled,
+        cloudEndpoint:typeof raw.cloudEndpoint === 'string' ? raw.cloudEndpoint : ""
       };
     }catch{}
     return {...DEFAULT_NETWORK};
@@ -5109,9 +5131,236 @@ if (typeof document !== "undefined"){
     const timer = setTimeout(()=>ctrl.abort(),timeout);
     try{
       const res = await fetch(url,{...options,signal:ctrl.signal});
-      if(!res.ok) throw new Error("HTTP "+res.status);
+      if(!res.ok){ const err=new Error("HTTP "+res.status); err.response=res; throw err; }
       return res;
     } finally { clearTimeout(timer); }
+  }
+  const CLOUD_KEY = "echoCloudAccountV1";
+  const CLOUD_PENDING_KEY = "echoCloudPendingRunsV1";
+  const CLOUD_TOKEN_RE = /^[A-Za-z0-9_-]{43}$/;
+  const CLOUD_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+  let cloudBusy = false, cloudTimer = 0, cloudLastPush = 0, cloudDirty = false;
+  function cloudReady(){ return !!(NET.cloudEnabled && NET.cloudEndpoint); }
+  function readCloudAccount(){
+    try{
+      const raw = JSON.parse(localStorage.getItem(CLOUD_KEY));
+      return raw && raw.endpoint === NET.cloudEndpoint && CLOUD_TOKEN_RE.test(raw.token || '') ? raw : null;
+    }catch{ return null; }
+  }
+  function saveCloudAccount(value){
+    try{
+      if(value) localStorage.setItem(CLOUD_KEY,JSON.stringify(value));
+      else localStorage.removeItem(CLOUD_KEY);
+    }catch{}
+  }
+  function cloudRunPayload(entry){
+    return {version:1,id:entry.id,route:entry.route,result:entry.result,score:entry.score,completed:entry.completed,
+      stamina:entry.stamina,legs:entry.legs,totalLegs:entry.totalLegs,elapsed:entry.elapsed,eco:entry.eco,endedAt:entry.endedAt};
+  }
+  function loadPendingCloudRuns(){
+    try{
+      const raw=JSON.parse(localStorage.getItem(CLOUD_PENDING_KEY));
+      return Array.isArray(raw) ? raw.filter(validCloudRun).slice(-200) : [];
+    }catch{ return []; }
+  }
+  function savePendingCloudRuns(list){
+    try{ localStorage.setItem(CLOUD_PENDING_KEY,JSON.stringify(list.slice(-200))); }catch{}
+  }
+  function queueCloudRun(entry){
+    if(!entry || !validCloudRun(entry)) return;
+    const list=loadPendingCloudRuns(), payload=cloudRunPayload(entry);
+    if(!list.some(item=>item.id===payload.id)){ list.push(payload); savePendingCloudRuns(list); }
+  }
+  function cloudStatus(message,isError=false){
+    const el=document.getElementById('cloud-account');
+    if(el){ el.textContent=message; el.classList.toggle('is-error',isError); }
+  }
+  function setCloudBusy(value){
+    cloudBusy=value;
+    const ready=cloudReady(), account=readCloudAccount();
+    const upload=document.getElementById('cloud-upload'); if(upload) upload.disabled=value||!ready;
+    const download=document.getElementById('cloud-download');
+    if(download){
+      const active=!!(S&&!S.over);
+      download.disabled=value||!ready||active;
+      download.title=active?'当前有进行中的模拟，完成或重新配装后才能下载':ready?'下载会替换本机档案与进行中的存档':'请先开启云同步并填写服务地址';
+    }
+    const del=document.getElementById('cloud-delete'); if(del) del.disabled=value||!ready||!account;
+  }
+  function refreshCloudControls(){
+    setCloudBusy(cloudBusy);
+    const toggle=document.getElementById('network-cloud');
+    let valid=false;
+    try{ valid=!!normalizeCloudEndpoint(document.getElementById('cloud-endpoint').value); }catch{}
+    if(toggle){
+      toggle.disabled=!valid&&!toggle.checked;
+      toggle.title=toggle.disabled?'请先填写有效的云服务地址':valid?'开启后上传本机档案与单局成绩':'可取消云同步；重新启用前需填写有效的云服务地址';
+    }
+    const account=readCloudAccount();
+    cloudStatus(account ? '匿名设备 '+account.publicId+' · 已同步版本 '+account.revision : '尚未在此服务创建匿名账号。');
+  }
+  function normalizeCloudEndpoint(value){
+    const s=String(value||'').trim();
+    if(!s) return '';
+    let u;
+    try{ u=new URL(s); }catch{ throw new Error('云服务地址格式不正确'); }
+    if(!['http:','https:'].includes(u.protocol)) throw new Error('云服务只支持 HTTP(S)');
+    if(u.protocol==='http:' && !['localhost','127.0.0.1','::1'].includes(u.hostname)) throw new Error('公网云服务请使用 HTTPS');
+    if(u.username || u.password || u.search || u.hash) throw new Error('云服务地址不能包含账号、查询参数或片段');
+    u.pathname=u.pathname.replace(/\/+$/,'');
+    return u.href.replace(/\/+$/,'');
+  }
+  function newCloudToken(){
+    const bytes=crypto.getRandomValues(new Uint8Array(32));
+    let binary=''; for(const byte of bytes) binary+=String.fromCharCode(byte);
+    return btoa(binary).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
+  }
+  async function cloudRequest(path,{method='GET',body,token}={}){
+    if(!NET.cloudEndpoint) throw new Error('请先填写云服务地址');
+    const headers={}; if(body!==undefined) headers['Content-Type']='application/json'; if(token) headers.Authorization='Bearer '+token;
+    let res;
+    try{ res=await fetchWithTimeout(NET.cloudEndpoint+path,{method,headers,body:body===undefined?undefined:JSON.stringify(body)},12000); }
+    catch(err){
+      if(!err.response) throw err;
+      let data; try{ data=await err.response.json(); }catch{}
+      throw new Error(data?.error?.message || '云服务请求失败（HTTP '+err.response.status+'）');
+    }
+    let data; try{ data=await res.json(); }catch{ throw new Error('云服务返回了无法识别的内容'); }
+    return data;
+  }
+  async function ensureCloudAccount(){
+    const existing=readCloudAccount(); if(existing) return existing;
+    const token=newCloudToken();
+    const account=await cloudRequest('/v1/accounts',{method:'POST',body:{token}});
+    const state={endpoint:NET.cloudEndpoint,token,publicId:account.publicId,revision:0};
+    saveCloudAccount(state); refreshCloudControls();
+    return state;
+  }
+  function validCloudRun(e){
+    return validRun(e) && CLOUD_UUID_RE.test(e.id) && ['win','retreat','collapse','hypothermia','heatIllness','dehydration'].includes(e.result) &&
+      typeof e.completed === 'boolean' && e.completed === (e.result === 'win') &&
+      Number.isInteger(e.score) && e.score >= 0 && e.score <= 100000 &&
+      Number.isInteger(e.stamina) && e.stamina >= 0 && e.stamina <= 100 &&
+      Number.isInteger(e.legs) && e.legs >= 1 && e.legs <= 100 &&
+      Number.isInteger(e.totalLegs) && e.totalLegs >= e.legs && e.totalLegs <= 100 &&
+      typeof e.elapsed === 'number' && Number.isFinite(e.elapsed) && e.elapsed >= 0 && e.elapsed <= 100000 &&
+      Number.isInteger(e.eco) && e.eco >= 0 && e.eco <= 100 &&
+      Number.isSafeInteger(e.endedAt) && e.endedAt >= 1600000000000 && e.endedAt <= Date.now() + 300000;
+  }
+  function cloudArchiveData(){
+    const archive=loadArchive();
+    let checkpoint=null;
+    try{ const raw=JSON.parse(localStorage.getItem(RUN_SAVE_KEY)); if(validRunCheckpoint(raw)) checkpoint=raw; }catch{}
+    return {version:1,baseline:archive.baseline,entries:archive.entries.filter(validCloudRun),checkpoint,customRoute:null};
+  }
+  function installCloudData(data,serverUpdatedAt){
+    if(!data || data.version!==1 || !Array.isArray(data.entries) || data.entries.length>300 || !data.baseline || typeof data.baseline!=='object' || Array.isArray(data.baseline)) throw new Error('云端存档结构无效');
+    if(!data.entries.every(validCloudRun) || (data.checkpoint!=null && !validRunCheckpoint(data.checkpoint))) throw new Error('云端存档含有无效数据');
+    const entries=data.entries.slice().sort((a,b)=>b.endedAt-a.endedAt).slice(0,300);
+    const archive={version:1,baseline:normalizeBaseline(data.baseline),entries,updatedAt:Number(serverUpdatedAt)||Date.now()};
+    let previousArchive, previousCheckpoint;
+    try{
+      previousArchive=localStorage.getItem(RUN_KEY);
+      previousCheckpoint=localStorage.getItem(RUN_SAVE_KEY);
+    }catch{ throw new Error('无法读取本机存储，未替换档案'); }
+    const previousMemory=memoryArchive;
+    let archiveWritten=false;
+    try{
+      localStorage.setItem(RUN_KEY,JSON.stringify(archive));
+      archiveWritten=true;
+      memoryArchive=archive;
+      if(validRunCheckpoint(data.checkpoint)) localStorage.setItem(RUN_SAVE_KEY,JSON.stringify(data.checkpoint));
+      else localStorage.removeItem(RUN_SAVE_KEY);
+    }catch{
+      if(!archiveWritten) throw new Error('本机存储空间不足，未替换档案');
+      let restored=true;
+      try{
+        if(previousArchive===null) localStorage.removeItem(RUN_KEY); else localStorage.setItem(RUN_KEY,previousArchive);
+        memoryArchive=previousMemory;
+        if(previousCheckpoint===null) localStorage.removeItem(RUN_SAVE_KEY); else localStorage.setItem(RUN_SAVE_KEY,previousCheckpoint);
+      }catch{ restored=false; }
+      throw new Error(restored?'本机存档写入失败，已恢复原有档案与进度。':'本机存档写入失败，回滚也未完成；请刷新页面并检查本机档案。');
+    }
+  }
+  async function cloudPushArchive(automatic=false,entry=null){
+    if(!NET.cloudEnabled) return false;
+    if(entry) queueCloudRun(entry);
+    if(cloudBusy){ cloudDirty=true; return false; }
+    if(!cloudReady()){ if(!automatic) cloudStatus('请先填写并应用云服务地址。',true); return false; }
+    setCloudBusy(true);
+    try{
+      const state=await ensureCloudAccount();
+      let archiveError=null, runSent=0, canUpload=true, baseRevision=state.revision;
+      if(automatic){
+        try{
+          const remote=await cloudRequest('/v1/save',{token:state.token});
+          if(remote.revision>state.revision || (remote.revision>0 && state.revision===0)){
+            canUpload=false;
+            cloudStatus('云端有尚未下载的存档；本机内容未被覆盖。请使用“下载云端”。');
+          }else baseRevision=remote.revision;
+        }catch(err){ archiveError=err; }
+      }
+      if(canUpload && !archiveError){
+        try{
+          const result=await cloudRequest('/v1/save',{method:'PUT',token:state.token,body:{baseRevision,clientUpdatedAt:Date.now(),data:cloudArchiveData()}});
+          saveCloudAccount({...state,revision:result.revision}); cloudLastPush=Date.now();
+          cloudStatus('已同步 · 版本 '+result.revision+' · '+new Date().toLocaleTimeString('zh-CN',{hour:'2-digit',minute:'2-digit'}));
+        }catch(err){ archiveError=err; }
+      }
+      const pending=loadPendingCloudRuns();
+      if(entry && validCloudRun(entry) && !pending.some(item=>item.id===entry.id)) pending.push(cloudRunPayload(entry));
+      for(const item of pending){
+        try{
+          await cloudRequest('/v1/runs',{method:'POST',token:state.token,body:item});
+          savePendingCloudRuns(loadPendingCloudRuns().filter(queued=>queued.id!==item.id));
+          runSent++;
+        }catch(err){ if(!archiveError) archiveError=err; break; }
+      }
+      if(archiveError) throw new Error(archiveError.message+(runSent?'；已上传 '+runSent+' 条成绩，其余仍留在本机待重试。':''));
+      return true;
+    }catch(err){ cloudStatus('云同步未完成：'+err.message.replace(/[。；;]+$/,'')+'。本机档案仍保留。',true); return false; }
+    finally{
+      setCloudBusy(false);
+      if(cloudDirty){ cloudDirty=false; if((S&&!S.over)||loadPendingCloudRuns().length) scheduleCloudCheckpoint(); }
+    }
+  }
+  async function cloudDownloadArchive(){
+    if(!cloudReady()){ cloudStatus('请先填写并应用云服务地址。',true); return; }
+    if(S && !S.over){ cloudStatus('当前有进行中的模拟，请完成或重新配装后再下载。',true); return; }
+    if(!window.confirm('下载会替换本机档案与进行中的存档；尚未上传的本机记录可能丢失。确定继续？')) return;
+    setCloudBusy(true);
+    try{
+      const state=await ensureCloudAccount();
+      const remote=await cloudRequest('/v1/save',{token:state.token});
+      if(!remote.data){ cloudStatus('云端还没有存档。'); return; }
+      installCloudData(remote.data,remote.serverUpdatedAt);
+      saveCloudAccount({...state,revision:remote.revision});
+      cloudStatus('已下载云端存档 · 版本 '+remote.revision);
+      if(main.querySelector('.rank-screen')) renderLeaderboard(rankFilter);
+      else renderRecords();
+    }catch(err){ cloudStatus('下载未完成：'+err.message.replace(/[。；;]+$/,'')+'。',true); }
+    finally{ setCloudBusy(false); }
+  }
+  async function cloudDeleteAccount(){
+    const state=readCloudAccount(); if(!state) return;
+    if(!window.confirm('将删除云端账号、云端存档和该账号的榜单单局记录；本机档案保留。此操作不可撤销，确定继续？')) return;
+    setCloudBusy(true);
+    try{
+      await cloudRequest('/v1/account',{method:'DELETE',token:state.token,body:{confirm:'DELETE'}});
+      saveCloudAccount(null); NET.cloudEnabled=false; saveNetworkSettings(); syncNetworkUI();
+      cloudStatus('云端账号已删除；本机档案保留。');
+    }catch(err){ cloudStatus('删除未完成：'+err.message.replace(/[。；;]+$/,''),true); }
+    finally{ setCloudBusy(false); }
+  }
+  function scheduleCloudCheckpoint(){
+    if(!cloudReady()) return;
+    if(cloudBusy){ cloudDirty=true; return; }
+    if(cloudTimer) return;
+    const delay=cloudLastPush ? Math.max(15000,45000-(Date.now()-cloudLastPush)) : 15000;
+    cloudTimer=setTimeout(()=>{
+      cloudTimer=0;
+      cloudPushArchive(true).catch(()=>{});
+    },delay);
   }
   async function fetchLiveWeather(route,{force=false}={}){
     if(!NET.weatherOnline) throw new Error("天气在线参考未开启");
@@ -5210,14 +5459,19 @@ if (typeof document !== "undefined"){
   }
 
   function networkLabel(){
-    if(!NET.weatherOnline && !NET.echoOnline) return "离线情景 / OFFLINE";
-    if(NET.weatherOnline && NET.echoOnline) return "在线增强 / ONLINE";
-    return NET.weatherOnline ? "天气在线 / HYBRID" : "助手在线 / HYBRID";
+    const modes=[];
+    if(NET.weatherOnline) modes.push('天气在线');
+    if(NET.echoOnline) modes.push('助手在线');
+    if(NET.cloudEnabled) modes.push('云同步');
+    if(!modes.length) return '离线情景 / OFFLINE';
+    return modes.join(' + ')+' / '+(modes.length===3?'ONLINE':'HYBRID');
   }
   function networkMode(){
-    if(!NET.weatherOnline && !NET.echoOnline) return {mode:'offline',label:'离线'};
-    if(NET.weatherOnline && NET.echoOnline) return {mode:'online',label:'在线增强'};
-    return {mode:'hybrid',label:NET.weatherOnline?'天气在线':'助手在线'};
+    const count=Number(NET.weatherOnline)+Number(NET.echoOnline)+Number(NET.cloudEnabled);
+    if(!count) return {mode:'offline',label:'离线'};
+    if(count===3) return {mode:'online',label:'在线增强'};
+    if(count===1) return {mode:'hybrid',label:NET.weatherOnline?'天气在线':NET.echoOnline?'助手在线':'云同步'};
+    return {mode:'hybrid',label:'混合在线'};
   }
   function resetOnlinePanel(){
     ++onlineHelpEpoch;
@@ -5237,6 +5491,16 @@ if (typeof document !== "undefined"){
       const label=btn.querySelector('.conn-label');
       if(label) label.textContent=state.label;
     }
+    const rankCloudButton=document.getElementById('rank-cloud');
+    if(rankCloudButton){
+      const ready=cloudReady();
+      rankCloudButton.disabled=!ready;
+      rankCloudButton.title=ready?'切换本机榜与云端社区榜':'请先在“网络与模式”中开启云同步并填写服务地址';
+    }
+    const recordsNote=document.getElementById('records-data-note');
+    if(recordsNote) recordsNote.textContent=(NET.cloudEnabled?'记录保存在这台设备；开启云同步后，本机档案与单局成绩也会上传到所配置的云服务。':'记录只保存在这台设备。')+'成绩是游戏内资源、进度与生态账户的合成分，不代表现实户外能力。';
+    const rankModeNote=document.querySelector('.rank-screen .ctext');
+    if(rankModeNote && !rankCloud) rankModeNote.textContent='按综合成绩排序；同分时依次比较完成状态、剩余体力与推进章节。'+(NET.cloudEnabled?'本机榜仍只读取本机档案；云端榜另行读取社区记录。':'当前数据只在本机，未上传。');
     const kicker=document.getElementById('help-kicker');
     if(kicker) kicker.textContent=NET.echoOnline?'ECHO · ASSISTANT / LOCAL + ONLINE':'ECHO · ASSISTANT / OFFLINE';
     const title=document.getElementById('help-title');
@@ -5266,6 +5530,9 @@ if (typeof document !== "undefined"){
     document.getElementById('network-weather').checked=!!NET.weatherOnline;
     document.getElementById('network-echo').checked=!!NET.echoOnline;
     document.getElementById('network-endpoint').value=NET.echoEndpoint||'';
+    document.getElementById('network-cloud').checked=!!NET.cloudEnabled;
+    document.getElementById('cloud-endpoint').value=NET.cloudEndpoint||'';
+    refreshCloudControls();
     const data=liveWeatherFor(selectedRoute);
     const status=document.getElementById('network-status');
     status.classList.remove('is-error');
@@ -5284,18 +5551,25 @@ if (typeof document !== "undefined"){
   }
   function applyNetworkSettings(){
     const status=document.getElementById('network-status');
-    let endpoint="";
-    try{ endpoint=normalizeEndpoint(document.getElementById('network-endpoint').value); }
-    catch(err){ status.textContent=err.message;status.classList.add('is-error');return; }
+    let endpoint="",cloudEndpoint="";
+    try{
+      endpoint=normalizeEndpoint(document.getElementById('network-endpoint').value);
+      cloudEndpoint=normalizeCloudEndpoint(document.getElementById('cloud-endpoint').value);
+      if(document.getElementById('network-cloud').checked && !cloudEndpoint) throw new Error('启用云同步前请填写云服务地址');
+    }catch(err){ status.textContent=err.message;status.classList.add('is-error');return; }
     NET={
       weatherOnline:document.getElementById('network-weather').checked,
       echoOnline:document.getElementById('network-echo').checked,
-      echoEndpoint:endpoint
+      echoEndpoint:endpoint,
+      cloudEnabled:document.getElementById('network-cloud').checked,
+      cloudEndpoint
     };
     saveNetworkSettings();
     syncNetworkUI();
+    refreshCloudControls();
     document.getElementById('network-dialog').close();
     if(NET.weatherOnline) ensureLiveWeather(selectedRoute,true).catch(()=>{});
+    if(NET.cloudEnabled) cloudPushArchive(true).catch(()=>{});
   }
 
   function loadBest(){
@@ -6333,7 +6607,7 @@ if (typeof document !== "undefined"){
         + '<section><h3>模拟不等于现实</h3><p>生存数值、风险提示、受伤与死亡结局均由算法生成，用于玩法反馈，不代表真实事件的发生概率。请勿据此决定真实行程或冒险。</p></section>'
         + '<section><h3>健康与紧急情况</h3><p>出现意识改变、呼吸困难、严重失温、大出血等情况，请立即联系当地急救，说明位置、人数与症状。不要因为继续游戏而延误求助。</p></section>'
         + '<section><h3>内容与来源</h3><p>图像与插曲由 AI 生成，可能存在瑕疵；离线知识库可能滞后或不全；开启在线功能后展示的第三方内容未经本作审核，可能错误或过时。</p></section>'
-        + '<section><h3>隐私与适龄</h3><p>离线模式不发起网络请求。在线模式会向相应服务发送查询词与路线坐标；本作不收集账号、支付或精确位置信息。内容含受伤、失温与死亡描写，建议未成年人在监护人知情下游玩。</p></section>'
+        + '<section><h3>隐私与适龄</h3><p>离线模式不发起网络请求。在线模式会向相应服务发送查询词与路线坐标；可选云同步使用匿名设备凭证保存档案与成绩，不收集实名账号、支付或精确位置信息。内容含受伤、失温与死亡描写，建议未成年人在监护人知情下游玩。</p></section>'
         + '<p class="legal-foot">最后更新：2026-11-23。</p>'
     },
     about: {
@@ -6344,7 +6618,7 @@ if (typeof document !== "undefined"){
         + '<section><h3>版本与内容</h3><p>本版更新：2026-11-24。四条官方启发路线（大峰、屋久岛、大峡谷、三峰）与可续接的二峰，加自定义路线；常识考核 80 题，随机 10 题、答对 8 题解锁模拟。</p></section>'
         + '<section><h3>入口地图</h3><p>首页：进入模拟、个人成绩、本地排行、常识考核、帮助中心、关于。局内：右上「地图」查看路线拓扑与已走轨迹，「手账」内含回声手账与环境账本。结局页：逐章回顾与回声手账。首页出现「继续上次」时，表示本机还存着一局未结束的进度。</p></section>'
         + '<section><h3>素材与来源</h3><p>场景图像与插曲由 AI 生成，可能存在瑕疵；路线里程、天数与开放状态来自公开资料的人工整理，核查日期写在路线简报里，出发前须重新核对官方公告。</p></section>'
-        + '<section><h3>本地数据</h3><p>成绩、排行、常识考核、设置与未结束的进度都只保存在本机浏览器，不上传；清除站点数据会一并删除「继续上次」的进度。</p></section>'
+        + '<section><h3>本地数据</h3><p>成绩、排行、常识考核与设置默认只保存在本机浏览器。可选云同步会上传本机档案、进行中的存档和单局成绩；Echo 问答与自定义路线草案不上传。清除站点数据会一并删除本机进度与设备凭证。</p></section>'
         + '<p class="legal-foot">此游戏仅为模拟-参考-学习，祝各位在旅途中平平安安。</p>'
     }
   };
@@ -6712,7 +6986,7 @@ if (typeof document !== "undefined"){
     main.innerHTML = '<section class="card records-screen">'
       + '<p class="kicker">LOCAL ARCHIVE / 本机档案</p>'
       + '<h2 class="ctitle" id="records-title" tabindex="-1">个人成绩</h2>'
-      + '<p class="ctext">记录只保存在这台设备。成绩是游戏内资源、进度与生态账户的合成分，不代表现实户外能力。</p>'
+      + '<p class="ctext" id="records-data-note">'+(NET.cloudEnabled?'记录保存在这台设备；开启云同步后，本机档案与单局成绩也会上传到所配置的云服务。':'记录只保存在这台设备。')+'成绩是游戏内资源、进度与生态账户的合成分，不代表现实户外能力。</p>'
       + (legacyRuns ? '<p class="rank-note">旧版存档已汇总 '+legacyRuns+' 局历史统计；单局明细与排行榜从本版开始记录。</p>' : '')
       + '<div class="record-metrics">'
       + metric('总局数',String(s.runs))
@@ -6731,19 +7005,24 @@ if (typeof document !== "undefined"){
   }
   function renderLeaderboard(filter='all'){
     rankFilter = filter;
+    rankCloud = false;
     const s = RunArchive.summary();
     const legacyRuns = Math.max(0,s.runs - s.entries.length);
     showArchiveBackdrop();
     main.innerHTML = '<section class="card rank-screen">'
       + '<p class="kicker">LOCAL LEADERBOARD / 本机排行</p>'
       + '<h2 class="ctitle" id="rank-title" tabindex="-1">本地排行榜</h2>'
-      + '<p class="ctext">按综合成绩排序；同分时依次比较完成状态、剩余体力与推进章节。当前数据只在本机，未上传。</p>'
+      + '<p class="ctext">按综合成绩排序；同分时依次比较完成状态、剩余体力与推进章节。'+(NET.cloudEnabled?'本机榜仍只读取本机档案；云端榜另行读取社区记录。':'当前数据只在本机，未上传。')+'</p>'
       + '<div class="rank-tabs" role="group" aria-label="按路线筛选">'
       + [['all','全部'],...Object.keys(ROUTES).filter(id=>!ROUTES[id].custom).map(id=>[id,routeTag(id)]),['custom','自定义']].map(([id,label])=>'<button type="button" data-rank="'+id+'" aria-pressed="'+(rankFilter===id)+'">'+label+'</button>').join('')
       + '</div><div class="rank-list-wrap" aria-live="polite"></div>'
-      + '<p class="rank-note">本地榜使用版本化单局记录，字段已按未来公网榜单预留；接入账号与后台校验前，不会宣称全国或全球排名。'+(legacyRuns?' 旧版 '+legacyRuns+' 局汇总只计入个人成绩，不进入单局榜。':'')+'</p>'
-      + '<div class="loadbtns"><button class="ghost" id="rank-back">返回首页</button><button class="ghost" id="rank-stats">个人成绩</button></div>'
+      + '<p class="rank-note" id="rank-note">本地榜使用版本化单局记录；云端榜仅作社区记录交流，不代表官方排名。'+(legacyRuns?' 旧版 '+legacyRuns+' 局汇总只计入个人成绩，不进入单局榜。':'')+'</p>'
+      + '<div class="loadbtns"><button class="ghost" id="rank-back">返回首页</button><button class="ghost" id="rank-stats">个人成绩</button><button class="ghost" id="rank-cloud" type="button" disabled>云端榜</button></div>'
       + '</section>';
+    const localRankNote=document.getElementById('rank-note').textContent;
+    const cloudButton=document.getElementById('rank-cloud');
+    cloudButton.disabled=!cloudReady();
+    cloudButton.title=cloudReady()?'切换本机榜与云端社区榜':'请先在“网络与模式”中开启云同步并填写服务地址';
     const paint = () => {
       const list = RunArchive.leaderboard(rankFilter).slice(0,30);
       const wrap = main.querySelector('.rank-list-wrap');
@@ -6751,10 +7030,33 @@ if (typeof document !== "undefined"){
         : '<div class="empty-ledger">这条路线还没有单局成绩。完成或中止一局后，会进入本地榜。</div>';
       main.querySelectorAll('[data-rank]').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.rank===rankFilter)));
     };
+    const paintCloud = async () => {
+      const wrap=main.querySelector('.rank-list-wrap');
+      wrap.innerHTML='<div class="empty-ledger">正在读取云端社区榜…</div>';
+      try{
+        const account=await ensureCloudAccount();
+        const data=await cloudRequest('/v1/leaderboard?route='+encodeURIComponent(rankFilter)+'&limit=30',{token:account.token});
+        if(!rankCloud || !wrap.isConnected) return;
+        wrap.innerHTML=data.items.length ? '<ol class="rank-list">'+data.items.map((e,i)=>'<li class="rank-row"><span class="rank-num">'+String(i+1).padStart(2,'0')+'</span><div class="rank-main"><b>'+esc(routeTag(e.route))+' · '+esc(resultName(e))+'</b><small>'+esc(runDate(e.endedAt))+' · '+e.legs+'/'+e.totalLegs+' 章 · 体力 '+e.stamina+' · 生态 '+e.eco+'/100</small></div><strong class="rank-score">'+e.score+'</strong></li>').join('')+'</ol>'
+          : '<div class="empty-ledger">云端榜还没有这条路线的记录。</div>';
+      }catch(err){ if(wrap.isConnected) wrap.innerHTML='<div class="empty-ledger">云端榜读取失败：'+esc(err.message)+'。本机榜不受影响。</div>'; }
+    };
+    const updateRankMode = () => {
+      cloudButton.textContent=rankCloud?'本机榜':'云端榜';
+      cloudButton.setAttribute('aria-pressed',String(rankCloud));
+      main.querySelector('.kicker').textContent=rankCloud?'COMMUNITY LEADERBOARD / 云端社区榜':'LOCAL LEADERBOARD / 本机排行';
+      document.getElementById('rank-title').textContent=rankCloud?'云端排行榜':'本地排行榜';
+      main.querySelector('.ctext').textContent=rankCloud?'按综合成绩排序。成绩由客户端上报，未经服务器复盘校验，不代表现实户外能力。':'按综合成绩排序；同分时依次比较完成状态、剩余体力与推进章节。'+(NET.cloudEnabled?'本机榜仍只读取本机档案；云端榜另行读取社区记录。':'当前数据只在本机，未上传。');
+      document.getElementById('rank-note').textContent=rankCloud?'社区榜仅作游戏记录交流；同分按结束时间与记录编号排序。成绩可被篡改，不能作为安全能力或官方排名。':localRankNote;
+    };
     main.querySelectorAll('[data-rank]').forEach(b=>b.addEventListener('click',()=>{
       rankFilter=b.dataset.rank;
-      paint();
+      if(rankCloud) paintCloud(); else paint();
     }));
+    cloudButton.addEventListener('click',()=>{
+      rankCloud=!rankCloud; updateRankMode();
+      if(rankCloud) paintCloud(); else paint();
+    });
     document.getElementById('rank-back').addEventListener('click',renderIntro);
     document.getElementById('rank-stats').addEventListener('click',renderRecords);
     paint();
@@ -6960,7 +7262,7 @@ if (typeof document !== "undefined"){
     }).join('');
     main.innerHTML = '<section class="card card-in routes-screen"><p class="kicker">选择情景 · 不是出行推荐</p><h2 class="ctitle" id="routes-title" tabindex="-1">这一次，走向哪里？</h2><div class="routepick">'
       + cards
-      + '</div><p class="hintline">四条官方路线与自定义路线都可能因失温、脱水或体力耗尽结束本局；大峰通关后可选择续接二峰。选项按行动与代价描述，不按固定难度排序；拿不准可以问 Echo。自定义路线只保存在本机。</p><div class="route-back"><button class="ghost" id="back">← 返回首页</button></div></section>';
+      + '</div><p class="hintline">四条官方路线与自定义路线都可能因失温、脱水或体力耗尽结束本局；大峰通关后可选择续接二峰。选项按行动与代价描述，不按固定难度排序；拿不准可以问 Echo。自定义路线草案只存本机；开启云同步后，自定义本局成绩会上传。</p><div class="route-back"><button class="ghost" id="back">← 返回首页</button></div></section>';
     main.querySelectorAll('[data-route]').forEach(b => b.addEventListener('click',()=>{
       selectedRoute=b.dataset.route;
       if(selectedRoute === 'custom'){ renderCustomEditor(); return; }
@@ -6990,8 +7292,8 @@ if (typeof document !== "undefined"){
         + '<label class="ce-desc-field">短描述<input data-ce="desc" maxlength="90" value="'+esc(n.desc)+'" autocomplete="off"></label></div></fieldset>';
     }).join('');
     const campCount = def.nodes.filter(n=>n.kind === 'camp').length;
-    main.innerHTML = '<section class="card card-in custom-editor"><p class="kicker">CUSTOM ROUTE · '+def.nodes.length+' NODES · LOCAL</p><h2 class="ctitle" id="ce-title" tabindex="-1">写一条只在本机运行的路线</h2>'
-      + '<div class="alert" role="note"><b>自定义模拟提示 · 非导航</b><span>地点、海拔和危险由你设定。每个节点按行动与代价选择，没有“条件未满足”锁；高风险行动可能受伤、失温或死亡。只保存在本机，不上传。</span></div>'
+    main.innerHTML = '<section class="card card-in custom-editor"><p class="kicker">CUSTOM ROUTE · '+def.nodes.length+' NODES · LOCAL</p><h2 class="ctitle" id="ce-title" tabindex="-1">写一条自己的模拟路线</h2>'
+      + '<div class="alert" role="note"><b>自定义模拟提示 · 非导航</b><span>地点、海拔和危险由你设定。每个节点按行动与代价选择，没有“条件未满足”锁；高风险行动可能受伤、失温或死亡。路线草案只存本机；开启云同步后，自定义本局成绩会上传。</span></div>'
       + '<label class="ce-name">路线名称<input id="custom-name" maxlength="20" value="'+esc(def.name)+'" autocomplete="off"></label>'
       + '<div class="ce-grid">'+fields+'</div>'
       + '<div class="ce-toolbar"><span>最少 '+CUSTOM_MIN_NODES+' 章 · 最多 '+CUSTOM_MAX_NODES+' 章 · 最后自动设为出口</span><button type="button" class="ghost" id="ce-random">随机生成</button><button type="button" class="ghost" id="ce-add" '+(def.nodes.length >= CUSTOM_MAX_NODES ? 'disabled' : '')+'>+ 添加节点</button></div>'
@@ -7057,7 +7359,7 @@ if (typeof document !== "undefined"){
     const facts = custom
       ? '<section class="route-facts"><h3 class="sect">自定义节点 · 本机草案</h3><p>'+esc(r.typical)+'</p><ol class="recap custom-nodes">'+r.rows.map((row,i)=>'<li>第'+(i+1)+'章 · '+esc(row[0])+'（约 '+row[1]+' m） · '+esc(CUSTOM_KINDS[row[4]] ? CUSTOM_KINDS[row[4]].label : '节点')+'</li>').join('')+'</ol><p class="hintline">'+esc(r.facts.elevation)+'</p></section>'
       : '<section class="route-facts"><h3 class="sect">官方规划资料 · 核查 '+esc(r.facts.checked)+'</h3><p>'+esc(r.typical)+'</p><dl><dt>距离</dt><dd>'+esc(r.facts.distance)+'</dd><dt>高差</dt><dd>'+esc(r.facts.elevation)+'</dd><dt>行走时间</dt><dd>'+esc(r.facts.hours)+'</dd></dl><details><summary>官方来源（联网查看；非实时获取）</summary><ul>'+r.sources.map(s=>'<li><a href="'+esc(s.url)+'" target="_blank" rel="noopener noreferrer">'+esc(s.label)+'</a></li>').join('')+'</ul></details></section>';
-    const customNote = custom ? '<p class="ctext">自定义路线只存本机；装备影响事故概率，但不会禁用任何推进选项。默认配装仍可出发；高风险行动可能结束本局。</p>' : '';
+    const customNote = custom ? '<p class="ctext">自定义路线草案只存本机；开启云同步后，自定义本局成绩会上传。装备影响事故概率，但不会禁用任何推进选项。默认配装仍可出发；高风险行动可能结束本局。</p>' : '';
     const editButton = custom ? '<button class="ghost" id="brief-edit">编辑节点</button>' : '';
     main.innerHTML = '<section class="card card-in brief">'+photoHTML(selectedRoute)
       + '<button type="button" class="brief-map" id="brief-map" aria-label="查看'+esc(r.name)+'地图">'+GLOBE_SVG+'<span>地图</span></button>'
@@ -7360,6 +7662,7 @@ if (typeof document !== "undefined"){
     if(title)title.focus({preventScroll:true});
     if(keepScroll)viewport.scrollTo(0, scroll);
     saveRunCheckpoint();
+    scheduleCloudCheckpoint();
   }
   function journalPending(st){ return st && Array.isArray(st.echoes) ? st.echoes.filter(e=>!e.resolved).length : 0; }
   function syncJournalBadge(){
@@ -7603,6 +7906,7 @@ if (typeof document !== "undefined"){
     if(!st.endingSaved){ st.routeBest = saveBest(st); st.endingSaved = true; }
     const best = st.routeBest;
     const record = RunArchive.record(st);
+    if(NET.cloudEnabled){ queueCloudRun(record.entry); cloudPushArchive(false,record.entry).catch(()=>{}); }
     setScreenBackdrop(SCENE_IMAGES.covers[st.routeId]);
     setBody(st,false);
     main.innerHTML =
@@ -7617,7 +7921,7 @@ if (typeof document !== "undefined"){
       + '<div class="tile"><div class="lab">体温</div><div class="val ' + statClass("temp", st.temp) + '">' + st.temp.toFixed(1) + '°C</div></div>'
       + '</div>'
       + (st.routeId === 'custom'
-        ? '<div class="run-score"><span>自定义本局评分</span><b>'+record.entry.score+'</b><small>仅本机记录 · 不上传 · 生态 '+record.entry.eco+'/100 · 已写入本机档案</small></div>'
+        ? '<div class="run-score"><span>自定义本局评分</span><b>'+record.entry.score+'</b><small>'+(NET.cloudEnabled?'已写入本机档案 · 云同步已开启':'仅本机记录 · 不上传')+' · 生态 '+record.entry.eco+'/100</small></div>'
         : '<div class="run-score"><span>本局综合成绩</span><b>'+record.entry.score+'</b><small>本地总榜第 '+record.rank+' 名 · 生态 '+record.entry.eco+'/100 · 已写入本机档案</small></div>')
       + '<p class="hintline">本局计划：'+esc(routeOf(st).simulation)+' 已推进至第'+st.day+'日；虚构行动累计'+st.elapsed+'h，不能由章节换算现实行走时间。</p>'
       + (st.routeId === 'custom' ? '' : '<p class="hintline">本局生命线：最低体温 '+Number(st.lowestTemp).toFixed(1)+'°C · 最低体力 '+Math.round(st.lowestStamina)+' · 触发事故 '+(st.customRiskHits||0)+' 次'+(st.lastCustomRisk?' · 最后一次：'+esc(String(st.lastCustomRisk.text).replace(/[。；;]+$/,'')):'')+'。</p>')
@@ -8567,6 +8871,11 @@ if (typeof document !== "undefined"){
   });
   document.getElementById('network-cancel').addEventListener('click',()=>document.getElementById('network-dialog').close());
   document.getElementById('network-save').addEventListener('click',applyNetworkSettings);
+  document.getElementById('cloud-endpoint').addEventListener('input',refreshCloudControls);
+  document.getElementById('network-cloud').addEventListener('change',refreshCloudControls);
+  document.getElementById('cloud-upload').addEventListener('click',()=>cloudPushArchive(false));
+  document.getElementById('cloud-download').addEventListener('click',cloudDownloadArchive);
+  document.getElementById('cloud-delete').addEventListener('click',cloudDeleteAccount);
   const mapDialog=document.getElementById('map-dialog');
   const mapCanvas=document.getElementById('map-canvas');
   const mapStageEl=document.querySelector('.map-stage');
@@ -8676,6 +8985,7 @@ if (typeof document !== "undefined"){
   window.addEventListener('pagehide',()=>{stopSpeech('页面已离开，朗读已停止。');stopVoiceInput('');});
   syncNetworkUI();
   renderIntro();
+  if(NET.cloudEnabled && loadPendingCloudRuns().length) cloudPushArchive(true).catch(()=>{});
 }
 </script>
 </body>
