@@ -2037,15 +2037,19 @@ function branchRow(st,row,leg){
   return [row[0],row[1],meta.title+' · '+row[2],row[3]+' '+meta.text,row[4]];
 }
 const rowAt = (st, leg = st.leg) => {
-  if (st.routeId === 'mountain' && st.snowEvent && leg > st.snowEvent.start && leg <= st.snowEvent.start+2) {
+  if (SNOW_ROUTES.has(st.routeId) && st.snowEvent && leg > st.snowEvent.start && leg <= st.snowEvent.start+2) {
     const pos=leg-st.snowEvent.start, descending = ['retreat','return','regroup'].includes(st.snowBranch), base=st.snowEvent.alt||4650;
     return [descending ? (pos===1?'已知下撤点':'背风回营段') : (pos===1?'风雪观察点':'低能见度确认点'), descending ? base-(pos===1?150:400) : base+(pos===1?100:250), '风雪后续', '', 'snow'];
   }
   if (st.routeEvent && leg > st.routeEvent.start && leg <= st.routeEvent.start+2) {
-    const forest=st.routeId==='forest', returning=st.routeEvent.branch==='withdraw', alt=st.routeEvent.alt||(forest?1380:780);
-    return [forest ? (returning ? '已知安全返程段' : '雨林中的已确认遮蔽点') : '已确认遮荫位置', returning?alt-10:alt, '阶段复核','','shelter'];
+    const forest=st.routeId==='forest', returning=st.routeEvent.branch==='withdraw', alt=st.routeEvent.alt||(forest?1380:780), pos=leg-st.routeEvent.start;
+    return [forest ? (returning ? '已知安全返程段 '+pos+'/2' : '雨林遮蔽复核点 '+pos+'/2') : '峡谷遮荫复核点 '+pos+'/2', returning?alt-10:alt+(pos===1?-20:20), pos===1?'阶段复核 · 首次遮蔽':'阶段复核 · 再次核对','','shelter'];
   }
-  return branchRow(st,routeOf(st).rows[clamp(leg - 1, 0, totalLegs(st) - 1)],leg);
+  const base=branchRow(st,routeOf(st).rows[clamp(leg - 1, 0, totalLegs(st) - 1)],leg);
+  if(SNOW_ROUTES.has(st.routeId) && base[4]==='summit' && ['retreat','return','regroup'].includes(st.snowBranch)){
+    return ['已确认下撤段',Math.max(4200,base[1]-450),'放弃高点 · 沿已确认路线回营',base[3]+' 队伍已放弃高点，沿确认路线分段下降。','summit'];
+  }
+  return base;
 };
 const altAt = (st, leg = st.leg) => rowAt(st, leg)[1];
 const dayAt = (st, leg = st.leg) => {
@@ -2107,7 +2111,7 @@ const ENCOUNTER_SCENARIOS = {
 };
 ENCOUNTER_SCENARIOS.erfeng = ENCOUNTER_SCENARIOS.mountain;
 ENCOUNTER_SCENARIOS.sanfeng = ENCOUNTER_SCENARIOS.mountain;
-const SNOW_MODEL='每项时间与体力相加；每方案只扣一次负重与基础饮水0.15L，超过2h另耗0.1L。寒冷散热额外加时长×0.12°C，避风乘0.25，加层乘0.65；毯沿用一次+0.8°C及挡散热规则。只是游戏参数，无医学保证。换衣仅清潮湿，干衣标记本局已用，新开一局恢复可用，不治伤；检查同伴没有恢复加成。预览期间不提供背包即时使用，提交仍复核全部状态。';
+const SNOW_MODEL='每项时间与体力相加；每方案只扣一次负重与基础饮水0.15L，超过2h另耗0.1L。寒冷散热额外加时长×0.12°C，避风乘0.25，加层乘0.65；毯沿用一次+0.8°C及挡散热规则。等待会提高后续风减弱的模拟概率，但不保证。只是游戏参数，无医学保证。换衣仅清潮湿，干衣标记本局已用，新开一局恢复可用，不治伤；检查同伴没有恢复加成。预览期间不提供背包即时使用，提交仍复核全部状态。';
 const ROUTE_MODEL={forest:'全部动作合并一次负重和章节消耗。森林基础饮水0.13L，超过2h另0.1L。换衣需要备用干衣且先遮蔽，不治伤。无额外夜晚、补给或无限恢复。严重症状优先于游戏温度；数值不是医疗许可。',canyon:'全部动作合并一次负重和章节消耗。峡谷基础饮水0.22/0.28L，超过2h另0.1L；冷却0.3L和少量饮水0.15L额外扣除。换衣需要备用干衣且先遮蔽；本情景主要靠遮蔽与冷却。无额外夜晚、补给或无限恢复。严重症状优先于游戏温度；数值不是医疗许可。'};
 function encounterAt(st, leg = st?.leg){
   return st?.encounterPlan?.find(e => e.start === leg) || null;
@@ -2330,9 +2334,10 @@ function weatherAt(st, leg = st.leg){
     const meta=ENCOUNTER_SCENARIOS[st.routeId]?.[enc.scenario];
     if(meta?.weather) return meta.weather;
   }
-  if (st.routeId === 'mountain' && st.snowEvent && leg > st.snowEvent.start && leg <= st.snowEvent.start+2) {
+  if (SNOW_ROUTES.has(st.routeId) && st.snowEvent && leg > st.snowEvent.start && leg <= st.snowEvent.start+2) {
     if (st.snowBranch === 'exposed') return 'storm';
-    return st.weatherRolls[leg-1] >= 0.55 ? 'wind' : 'storm';
+    const windCut=Math.max(.05,.55-(st.snowEvent.waitCount||0)*.25);
+    return st.weatherRolls[leg-1] >= windCut ? 'wind' : 'storm';
   }
   if (st.routeId === 'forest' && st.routeEvent?.calmed && leg === st.routeEvent.start + 2) return 'wind';
   const roll = st.weatherRolls[leg - 1], progress = dayProgress(st,leg);
@@ -2402,9 +2407,10 @@ function snowGate(st){
 function snowBranchCard(st){
   const stop=C('安全中止：停止并联络保障求助',{}, {retreat:true});
   const down=C('阶段下撤：放弃原定路线，沿已知路线回营',{st:-3,t:1.2},{snowNext:'return',shelter:true});
-  const gate='游戏通行条件：风雪减弱、标记可见，模拟体温≥35°C、体力≥30、水≥0.6L，未偏航或受伤。这不是医学许可；严重症状立即停止求助。';
+  const gate='游戏通行条件：风雪减弱、标记可见，模拟体温≥35°C，进入下一段后体力≥30、水≥0.6L，未偏航或受伤。这不是医学许可；严重症状立即停止求助。';
   const pos=st.snowEvent?clamp(st.leg-st.snowEvent.start,1,2):1;
   const target=st.snowEvent?.descending?'原定下降路线':'本日高点';
+  const canWaitMore=pos===1 && weatherAt(st)==='storm' && ['waited','reassessed'].includes(st.snowBranch) && (st.snowEvent?.waitCount||0)<2;
   let title,text,choices;
   if (['retreat','return','regroup'].includes(st.snowBranch)) {
     title=pos===1?'下降：抵达已知撤返点':st.snowBranch==='regroup'?'队伍重整：背风返营':'下降：最后一段背风归路';
@@ -2412,15 +2418,16 @@ function snowBranchCard(st){
     choices=[C('清点同伴，完成这一段下降',{st:-2,t:pos===1?1.3:0.9},{snowNext:'return',shelter:true,help:true}),stop];
   } else if(pos===1 && st.snowBranch==='exposed') {
     title='前方标记消失';text='加层或检查同伴不能恢复能见度。未等待窗口，前路仍被风雪遮住；不能继续移动。仅有一次已知避风点复核机会，然后必须进入下一段。';
-    choices=[C('在已知遮蔽处等待并复核一次',{st:-3,t:1.5},{snowNext:'reassessed',shelter:true}),down,stop];
+    choices=[C('在已知遮蔽处等待并复核一次',{st:-3,t:1.5},{snowNext:'reassessed',shelter:true,waitMore:true,note:'等待提高后续风减弱的模拟概率，但不保证；仍消耗体力、时间与水。'}),down,stop];
   } else {
     title=pos===1?'等待之后：重新辨认路标':'再次确认：继续或下降';
     text=(weatherAt(st)==='storm'?'等待后风雪仍未减弱，标记不可辨认。':'本章风势减弱，已知路标重新可见；窗口并非保证。')+' '+gate;
     choices=[C(pos===1?'条件满足：沿确认路线到下一观察点':'条件满足：短停观察点，随即下降',{st:-4,t:0.8},{snowForward:true,snowNext:'pass',shelter:true}),down,stop];
+    if(canWaitMore)choices.unshift(C('继续在已知避风处等待，再复核一次',{st:-1,t:1},{snowNext:'reassessed',shelter:true,waitMore:true,note:'再等一次会进一步提高风减弱的模拟概率，但仍可能失败；消耗体力、时间与水。'}));
   }
   if(st.temp<35) {text+=' 模拟低温：不能继续移动，停止并求助。';choices=[stop];}
   syncGateLabels(st, choices);
-  return {id:'mountain-snow-'+st.leg,title,text,kind:'snow',choices};
+  return {id:st.routeId+'-snow-'+st.leg,title,text,kind:'snow',choices};
 }
 function routeEventGate(st){
   const skyOK=st.routeId==='canyon' ? st.temp<=38.5 : weatherAt(st)!=='storm';
@@ -2446,8 +2453,8 @@ function routeEventCard(st){
   } else {
     const blocked=e.branch==='reassess' && !last;
     const gate=forest
-      ? '游戏推进门槛：非强降雨、水势已回落、体温≥35°C、体力≥30、水≥0.6L，未偏航或受伤，未出现意识异常与呼吸异常。这不是科学安全许可。'
-      : '游戏推进门槛：体温≥35°C且≤38.5°C（超过 38.5°C 必须冷却）、体力≥30、水≥0.6L，未偏航或受伤，未出现意识异常与呼吸异常。这不是科学安全许可。';
+      ? '游戏推进门槛：非强降雨、水势已回落、体温≥35°C，行动后体力≥30、水≥0.6L，未偏航或受伤，未出现意识异常与呼吸异常。这不是科学安全许可。'
+      : '游戏推进门槛：体温≥35°C且≤38.5°C（超过 38.5°C 必须冷却），行动后体力≥30、水≥0.6L，未偏航或受伤，未出现意识异常与呼吸异常。这不是科学安全许可。';
     const science=forest
       ? '涨水、饱和地面与不确定能见度共同增加风险。水退不代表可涉水；本情景没有过河选项，也不提供床位、餐食或补水。'
       : '热量产生与散失共同影响热负荷；饮水不等于冷却或治愈热射病。意识混乱或呼吸异常优先于温度读数，立即冷却求救。';
@@ -2468,10 +2475,14 @@ function routeEventCard(st){
     const forwardLabel = forest
       ? (last?'条件满足：准备沿干燥标记路径上行至补给点':'条件满足：准备沿干燥标记路径前进一段')
       : (last?(e.moving?'条件满足：沿确认遮荫段继续上行至下一补给点':'条件满足：经确认遮荫段逐段上行至下一复核点'):'条件满足：沿确认遮荫段上行至下一复核点');
-    if(!blocked) choices.push(C(forwardLabel,{st:!forest&&last&&!e.moving?-6:-3,t:!forest&&last&&!e.moving?2.5:1},{shelter:forest,eventForward:true,eventNext:'continue',note:forwardNote}));
-    if(!last){
-      const treating=!!(st.flags.injury||st.flags.lost);
-      choices.push(C(treating?(forest?'停下处理脚踝伤并核对路径，下一章复核':'停下处理伤情并核对位置，下一章复核'):(forest?'仅一次遮蔽停留，下一章复核':'仅一次用水0.3L冷却、扇风并检查'),{st:treating?-1:-2,t:treating?1.5:1},{shelter:true,eventNext:'checked',eventWater:forest?0:0.3,cool:!forest,recover:treating,navigate:treating,note:treating?(forest?'这次停留用于处理已记录的轻伤并重新核对标记；游戏只模拟轻微恢复，严重伤情应停止求援。':'这次停留用于处理已记录的轻伤并核对位置；饮水与冷却不等于治愈，严重症状应停止求援。'):(forest?'在已知遮蔽处等待并复核一次；水退不等于可以涉水。':'用水冷却、扇风并检查同伴；饮水不等于治愈，下一章仍要复核。')}));
+    const forward=C(forwardLabel,{st:!forest&&last&&!e.moving?-6:-3,t:!forest&&last&&!e.moving?2.5:1},{shelter:true,eventForward:true,eventNext:'continue',note:forwardNote});
+    if(!blocked) choices.push(forward);
+    const treating=!!(st.flags.injury||st.flags.lost);
+    if(!last || treating){
+      choices.push(C(treating?(forest?'停下处理脚踝伤并核对路径'+(last?'，随后回到原路线':'，下一章复核'):'停下处理伤情并核对位置'+(last?'，随后回到原路线':'，下一章复核')):(forest?'仅一次遮蔽停留，下一章复核':'仅一次用水0.3L冷却、扇风并检查'),{st:treating?-1:-2,t:treating?1.5:1},{shelter:true,eventNext:'checked',eventWater:forest?0:0.3,cool:!forest,recover:treating,navigate:treating,note:treating?(forest?'这次停留用于处理已记录的轻伤并重新核对标记；游戏只模拟轻微恢复，严重伤情应停止求援。':'这次停留用于处理已记录的轻伤并核对位置；饮水与冷却不等于治愈，严重症状应停止求援。'):(forest?'在已知遮蔽处等待并复核一次；水退不等于可以涉水。':'用水冷却、扇风并检查同伴；饮水不等于治愈，下一章仍要复核。')}));
+    }
+    if(forest && last && !treating && (projectedChoiceStamina(st,forward)<30 || projectedChoiceWater(st,forward)<0.6)){
+      choices.push(C('最后复核：停止移动，短休并重新分配余量',{st:4,t:1.2},{shelter:true,rest:true,eventNext:'checked',note:'不在本段继续移动；短休只提供有限的模拟恢复，下一章回到原路线后仍按剩余体力、水量与天气结算。'}));
     }
     choices.push(forest?withdraw:stop);
     text+=' '+science+' '+gate;
@@ -2589,7 +2600,7 @@ const ROUTE_VOICE = {
     path:[
       ['跟着标记与木桩走，不踩出新路','沿已确认的标记前进，不踩出新路；湿苔藓上的新脚印留不住方向，雨雾里别沿溪谷下降。'],
       ['在根须间核对地图与方位','核对更慢；雨声与雾气会误导方向，地图不能保证前方木阶安全。'],
-      ['钻进看似更短的林间缝隙','缝隙可能通向湿地、断木或涨水支沟；偏航后需回溯。']
+      ['钻进看似更短的林间缝隙','基础体力按当前配装显示；缝隙可能通向湿地、断木或涨水支沟，偏航后需回溯，事故另扣6–18体力并可能扭伤。']
     ],
     terrain:[
       ['踩稳树根与湿木阶，先试再承重','苔藓与水膜让摩擦变小；旧伤、潮湿和疲劳会放大滑倒风险。'],
@@ -2827,7 +2838,8 @@ function customCard(st){
   return {id:"custom-"+st.leg,title:row[0]+" · "+row[2],text,kind,choices};
 }
 function snowAbandonSummitCard(st){
-  return {id:'mountain-abandon-'+st.leg,title:'放弃高点 · 沿已确认路线回营',text:'此前已在风雪复核中选择下撤或返营，队伍不会重新尝试高点。今天的任务是把这一段已知路线走完，并在营地清点人员。',kind:'shelter',choices:[
+  const scene={mountain:'mountain_descent_scree',erfeng:'erfeng_descent',sanfeng:'sanfeng_descent'}[st.routeId]||'mountain_descent_scree';
+  return {id:st.routeId+'-abandon-'+st.leg,title:'放弃高点 · 沿已确认路线回营',text:'此前已在风雪复核中选择下撤或返营，队伍不会重新尝试高点。今天的任务是把这一段已知路线走完，并在营地清点人员。',kind:'shelter',scene,choices:[
     C('沿已确认路线下降到营地',{st:-3,t:1.4},{shelter:true,help:true,note:'按已确认路线分段下降；不因天气短暂好转就返回高点。'}),
     C('安全中止：停止并联络向导保障',{}, {retreat:true,note:'游戏把保障撤离抽象为结局；现实撤离并非瞬间完成或保证安全。'})
   ]};
@@ -2883,12 +2895,12 @@ function cardAt(st){
     pace:[safe("在确认的休息点调整节奏", {rest:true, fx:{st:7,t:1}, note:"休息能恢复一部分体力，但时间、饮水和身体状况仍需一起考虑。"}), C("放慢脚步，按呼吸决定快慢",{st:2,t:1.4},{rest:true,note:"慢走比急行省力，但拖长时间并多耗水；感到气促就应停下，而不是硬撑。"}), risky("赶路，透支后续余量")],
     altitude:[safe("停止上升，联络保障并评估", {fx:{st:5,t:1}, note:"队伍在住宿地停止上升，严重症状者由保障接手。本章不奖励带症状冲高；现实严重不适应停止并求助。"}), C("原地停留观察，不再提高营地",{st:-1,t:1.2},{shelter:true,note:"停留能争取观察时间，但不能替代下降；症状加重、步态不稳或静息气促应立即求助。"}), C("全队结束本次行程",{}, {retreat:true})],
     dry:[safe("在遮蔽处整理干层", {recover:true,shelter:true}), C("拧干外层，快速通过风口",{st:-2,t:0.5},{note:"拧干只是临时处理，潮衣状态仍在，后续散热与受伤概率继续受影响。"}), risky("把湿衣塞回去",{wet:true})],
-    path:[safe("核对标记，不离开确认路线",{navigate:true,note:"退回最后确认点会花时间，但不凭猜测穿越未知地形。"}), C("停下用地图与指北针核对方位",{st:-4,t:1.2},{navigate:true,note:"核对更稳妥但更慢；地图和定位不能保证前方地形安全。"}), risky("试探未确认的近路",{detour:true,damage:true})],
+    path:[safe("核对标记，不离开确认路线",{navigate:true,note:"退回最后确认点会花时间，但不凭猜测穿越未知地形。"}), C("停下用地图与指北针核对方位",{st:-4,t:1.2},{navigate:true,note:"核对更稳妥但更慢；地图和定位不能保证前方地形安全。"}), risky("试探未确认的近路",{risk:.30,detour:true,damage:true})],
     trash:[safe("封袋携出可安全够到的废物",{waste:0.12,eco:"封袋携出包装，不越出步道追垃圾。"}), C("只带走够得到的一件，其余标记位置",{st:-1,t:0.6},{waste:0.06,eco:"只处理可安全够到的一件，其余标记位置；返程不一定经过。"}), risky("留下包装减重",{litter:true,eco:"留下包装：记录一项未修复的环境负担，终点不能抹去。"})],
     wash:[safe("远离水源，按当地规定处理",{eco:"未在水源洗涤；污物封存带走。",waste:0.03}), C("用少量水擦洗，污水装袋带走",{st:-1,t:0.8},{waste:0.04,eco:"用少量水擦洗，污水封存携出。"}), risky("直接在溪流或河边洗",{pollute:true,eco:"洗涤物进入水源：本局记录污染行为。"})],
     food:[safe("食物和残渣密封随身保管",{seal:true,waste:0.06,eco:"食物残渣封存，未投喂野生动物。"}), C("残渣封袋外挂，减少装包体积",{st:-1,t:0.5},{seal:true,waste:0.06,note:"外挂能省装包空间，但破损会弄脏装备；本游戏按已封存处理。"}), risky("把剩食留在外面",{foodOpen:true,eco:"暴露食物吸引动物；后续可能损失配给。"})],
     camp:[C("使用已获准营位，进食并检查装备",{st:48,t:2},{camp:true,recover:true,seal:true,shelter:campShelter,waste:0.08,note:"仅自选装备计入背包，营位不提供共用睡具。体力恢复与营地配餐是剧情保障抽象，不证明现实能睡暖或有餐食；缺项应重新规划。"}), C("只进食不整理装备，尽快入睡",{st:40,t:1.5},{camp:true,shelter:campShelter,foodOpen:true,note:"快速入睡恢复尚可，但食物未封存，可能招来动物并损失配给。"}), C("熬夜拍摄，忽略潮衣和食物",{st:12,t:4},{camp:true,poorCamp:true,foodOpen:true,note:"睡眠不足与潮湿会留到次日；夜间不是免费补给时间。"})],
-    supply:[C("领取情景保障配给，核对储水",{st:8,t:0.5},{refill:true,note:"只在明示保障点补给，受水容器与剩余装包容积双重限制；实际供水须另查。"}), C("只补半量，减轻背负重量",{st:5,t:0.6},{halfRefill:true,note:"半量补给降低负重，但后续章节可用的水更少；仍受容器与装包容积限制。"}), safe("不补给，沿用现有储备")],
+    supply:[C("领取情景保障配给，核对储水",{st:8,t:0.5},{refill:true,note:"只在明示保障点补给，受水容器与剩余装包容积双重限制；实际供水须另查。"}), C("只补半量，减轻背负重量",{st:5,t:0.6},{halfRefill:true,note:"半量补给降低负重，但后续章节可用的水更少；仍受容器与装包容积限制。"}), safe("不补给，沿用现有储备",{skipSupply:true})],
     terrain:[safe("稳定落脚，检查脚踝",{careful:true,note:"湿滑、伤情、疲劳和器材共同影响事故概率；装备不能保证不会摔倒。"}), C("绕向旁边的土路避开碎石",{st:-4,t:1.2},{detour:true,note:"绕行可能偏离标记路线，下一章需花时间回溯。"}), risky("跳过难走的台阶",{risk:0.4})],
     wind:[safe("压低重心，等保护就位再逐段通过",{careful:true,shelter:true,note:"缩短暴露并保持绳队间距；横风仍可能使人失足，庇护不能代替保护。"}), C("扶稳同伴，沿背风侧缓慢移动",{st:-4,t:1.2},{help:true,note:"互相扶稳会拖慢队伍，但减少在暴露处落单。"}), risky("抢在阵风间隙冲过暴露段",{risk:0.42})],
     night:[safe("有头灯则谨慎走，无灯等待晨光",{nightSafe:true}), C("原地休息，等天色转亮再走",{st:2,t:2.5},{shelter:true,note:"等待更久也更安全，但会额外耗水并压缩下一段余量；天气仍可能变化。"}), risky("摸黑赶路",{risk:0.5})],
@@ -2922,7 +2934,7 @@ function cardAt(st){
   choices.forEach(ch => {if (ch.note === "这只是简化的游戏权衡，不是现实行动指导。") ch.note = explanation;});
   const summitStorm = kind==='summit' && weatherAt(st)==='storm';
   const summitBadWeather = {mountain:'风雪未减弱',forest:'强降雨未减弱',canyon:'酷热暴露未缓解'}[st.routeId] || '天气未好转';
-  if (summitStorm) choices[0]=C('天气不允许：放弃顶点，立即沿确认路线下撤',{st:-2,t:1.2},{shelter:true,note:'当前'+summitBadWeather+'，不登顶；高点记录作废，沿确认路线下降并完成生命状态检查。'});
+  if (summitStorm) choices[0]=C('天气不允许：放弃顶点，立即沿确认路线下撤',{st:-2,t:1.2},{shelter:true,summitOmitted:'本章天气未满足高点记录条件，放弃高点并完成归途',note:'当前'+summitBadWeather+'，不登顶；高点记录作废，沿确认路线下降并完成生命状态检查。'});
   const voice = ROUTE_VOICE[st.routeId]?.[kind];
   if (voice) voice.forEach((v, i) => {if (v && choices[i]) {choices[i].label = v[0]; choices[i].note = v[1];}});
   if (kind==='supply' && st.routeId==='canyon' && st.leg>6){
@@ -2980,6 +2992,17 @@ function chapterSip(st){
 function eventWaterNeed(st, ch){
   return r2((ch.eventWater||0) + chapterSip(st) + ((ch.fx.t+(st.flags.lost?1.5:0))>2?0.1:0));
 }
+function projectedChoiceStamina(st,ch){
+  let delta=choiceStamina(st,ch);
+  if(st.flags.lost)delta-=5;
+  if(st.flags.injury&&!ch.recover)delta-=st.flags.injury*2;
+  if(st.flags.foodOpen)delta-=5;
+  return st.stamina+delta;
+}
+function projectedChoiceWater(st,ch){
+  const duration=(ch.fx.t||.7)+(ch.nightSafe&&!st.lamp?2:0)+(st.flags.lost?1.5:0);
+  return r2(st.water-(ch.eventWater||0)-(ch.drink||0)-chapterSip(st)-(duration>2?.1:0));
+}
 // One shared source of truth for disabled options, labels and the visible gate panel.
 function choiceGate(st, ch){
   const reasons=[];
@@ -2994,8 +3017,8 @@ function choiceGate(st, ch){
     } else if(weatherAt(st)==='storm') reasons.push('风雪未减弱');
     if(st.temp<35) reasons.push('体温<35°C');
     if(st.routeId==='canyon' && st.temp>38.5) reasons.push('体温>38.5°C');
-    if(st.stamina<30) reasons.push('体力<30');
-    if(st.water<0.6) reasons.push('水<0.6L');
+    if(projectedChoiceStamina(st,ch)<30) reasons.push('行动后体力<30');
+    if(projectedChoiceWater(st,ch)<0.6) reasons.push('行动后水<0.6L');
     if(st.flags.lost) reasons.push('偏航未回溯');
     if(st.flags.injury) reasons.push('脚踝伤未处理');
     if(st.flags.confusion) reasons.push('意识异常');
@@ -3008,11 +3031,12 @@ function choiceGate(st, ch){
   if(ch.snowForward){
     if(weatherAt(st)==='storm') reasons.push('风雪未减弱');
     if(st.temp<35) reasons.push('体温<35°C');
-    if(st.stamina<30) reasons.push('体力<30');
-    if(st.water<0.6) reasons.push('水<0.6L');
+    if(projectedChoiceStamina(st,ch)<30) reasons.push('行动后体力<30');
+    if(projectedChoiceWater(st,ch)<0.6) reasons.push('行动后水<0.6L');
     if(st.flags.lost) reasons.push('偏航未回溯');
     if(st.flags.injury) reasons.push('脚踝伤未处理');
   }
+  if(st.routeId==='canyon' && ch.skipSupply && st.leg>6 && st.water<3.2) reasons.push('当前水<3.2L，先完成保障点补给');
   if(ch.needTablet && !(st.items.tablet>0)) reasons.push('无净水片');
   if(ch.drink && st.water<0.3) reasons.push('水<0.3L');
   if(typeof systemsChoiceEnabled==="function" && !systemsChoiceEnabled(st,ch)) reasons.push('系统条件未满足');
@@ -3172,7 +3196,7 @@ function applyActionCore(st, ch, card, events){
       const severe = riskBase >= 0.32;
       let msg = "";
       if (terrain || card.kind === "team"){
-        const cost = critical ? 42 : severe ? 24 : 10;
+        const cost = ch.detour ? (critical ? 18 : severe ? 12 : 6) : (critical ? 42 : severe ? 24 : 10);
         st.flags.injury = Math.min(2,st.flags.injury+1);
         st.stamina = Math.max(0,st.stamina-cost);
         msg = card.kind === "wildlife"
@@ -3203,6 +3227,7 @@ function applyActionCore(st, ch, card, events){
     }
   }
   if (ch.summit && !ch.snowForward){ st.flags.summit = w !== "storm"; events.push(st.flags.summit ? "记录高点，仍须完成归途。" : "能见度恶化，放弃顶点转入归途。"); }
+  if(ch.summitOmitted && !st.flags.summit){ st.summitOmitted=ch.summitOmitted; events.push(st.summitOmitted); }
   if (ch.eco) st.environment.push({day:st.day,stop:rowAt(st)[0],text:ch.eco});
   if (ch.litter || ch.pollute || ch.damage){ st.flags.litter++; if (ch.damage) st.environment.push({day:st.day,stop:rowAt(st)[0],text:"离开标记路线，对地表造成额外扰动。"}); }
   if (ch.waste){
@@ -3277,11 +3302,15 @@ function applyActionCore(st, ch, card, events){
     st.snowBranch=ch.snowActions.includes('retreat')?'retreat':ch.snowActions.includes('wait')?'waited':'exposed';
     st.snowChosen=ch.label;
     const summitLeg=routeOf(st).rows.findIndex(row=>row[4]==='summit')+1;
-    st.snowEvent={start:leg,alt:altAt(st,leg),descending:leg>summitLeg,scenario:activeEncounter?.scenario||'whiteout'};
+    st.snowEvent={start:leg,alt:altAt(st,leg),descending:leg>summitLeg,waitCount:ch.snowActions.includes('wait')?1:0,scenario:activeEncounter?.scenario||'whiteout'};
     if(activeEncounter) activeEncounter.resolved=true;
   }
-  if (ch.snowNext) st.snowBranch=ch.snowNext==='reassessed' && storyRandom(st,31)<0.55?'regroup':ch.snowNext;
-  if (st.snowEvent && ['retreat','return','regroup'].includes(st.snowBranch)) {
+  if(ch.waitMore&&st.snowEvent){
+    st.snowEvent.waitCount=Math.min(2,(st.snowEvent.waitCount||0)+1);
+    events.push('再次等待后，模拟风减弱概率提高，但仍需按本章种子天气复核。');
+  }
+  if (ch.snowNext) st.snowBranch=ch.snowNext;
+  if (st.snowEvent && !st.snowEvent.descending && ['retreat','return','regroup'].includes(st.snowBranch)) {
     st.flags.summit=false;st.summitOmitted='风雪分支选择放弃原定路线，沿已知路线回营';
     events.push(st.summitOmitted);
   }
@@ -3325,7 +3354,7 @@ const ECHO_RULES = [
   {kind:'help', label:'援手回声', delay:2, delta:5, stamp:true,
     match:ch=>!!ch.help,
     record:'你把时间分给了同伴；这份照应还没有回到你身上。',
-    settle:(st,d)=>({mountain:'受助的同伴在下一段替你分担了公共装备',forest:'受助的同伴在湿木阶前替你探了一段路',canyon:'受助的同伴在阴影里替你多背了一小段',custom:'受助的同伴在下一节点替你分担了一小段负重'})[st.routeId]+'；'+echoEffect(d)+'。'},
+    settle:(st,d)=>({mountain:'受助的同伴在下一段替你分担了公共装备',erfeng:'受助的同伴在横切与雪坡上替你分担了公共装备',sanfeng:'受助的同伴在绳段前后替你分担了公共装备',forest:'受助的同伴在湿木阶前替你探了一段路',canyon:'受助的同伴在阴影里替你多背了一小段',custom:'受助的同伴在下一节点替你分担了一小段负重'})[st.routeId]+'；'+echoEffect(d)+'。'},
   {kind:'pickup', label:'清理回声', delay:3, delta:3, stamp:true,
     match:ch=>!!ch.waste,
     record:'你多带走了一件不属于你的东西；路面暂时干净了一点。',
@@ -3396,17 +3425,17 @@ const ENDINGS = {
 };
 const BADGE_DESC = {"归途完成":"不评定现实生存技能；请阅读环境与事件复盘。","主动中止":"放弃行程不等于失败。","模拟警报":"这不是医疗诊断或真实户外能力评分。"};
 /* expose for tests / UI */
-var Core = { newRun, continueRun, weatherAt, cardAt, choiceEnabled, choiceGate, eventWaterNeed, useItem, applyChoice, ROUTES, routeOf, totalLegs, altAt, dayAt, dayProgress, wxName, fatalAt, ENDINGS, BADGE_DESC, GEAR, PACKS, DEFAULT_LOADOUT, loadoutWeight, loadoutVolume, loadoutCapacity, loadoutError, vesselCapacity, inventoryError, currentWeight, currentVolume, weightPenalty, waterLimit, choiceStamina, missingGear, encounterAt, encounterMeta, ENCOUNTER_SCENARIOS, echoJournal, ECHO_RULES, customChoiceRisk, physicalRiskKind, buildCustomRoute, normalizeCustomDef, customDefaultDef, randomCustomDef, CUSTOM_KINDS };
+var Core = { newRun, continueRun, weatherAt, cardAt, choiceEnabled, choiceGate, eventWaterNeed, useItem, applyChoice, ROUTES, routeOf, rowAt, totalLegs, altAt, dayAt, dayProgress, wxName, fatalAt, ENDINGS, BADGE_DESC, GEAR, PACKS, DEFAULT_LOADOUT, loadoutWeight, loadoutVolume, loadoutCapacity, loadoutError, vesselCapacity, inventoryError, currentWeight, currentVolume, weightPenalty, waterLimit, choiceStamina, missingGear, encounterAt, encounterMeta, ENCOUNTER_SCENARIOS, echoJournal, ECHO_RULES, customChoiceRisk, physicalRiskKind, buildCustomRoute, normalizeCustomDef, customDefaultDef, randomCustomDef, CUSTOM_KINDS };
 
 /* One bounded encounter. JSON snapshots are values, never executable text. */
 var SnowActions = (() => {
   const catalog = Object.freeze({
-    shelter:{label:'移到已确认的附近安全避风处',t:0.3,st:-3,need:'情景已知附近遮蔽；偏航时不可假定能到达'},
+    shelter:{label:'移到已确认的附近安全避风处',t:0.3,st:-2,need:'情景已知附近遮蔽；偏航时不可假定能到达'},
     dry:{label:'在遮蔽处换备用干衣',t:0.3,st:-1,need:'备用干衣；先选择避风；仅清潮湿，不治脚踝'},
     layer:{label:'加保暖中层与防风外套',t:0.2,st:-1,need:'同时携带保暖中层与外套'},
     blanket:{label:'用应急保温毯临时挡风',t:0.2,st:-1,need:'消耗1张；整张0.15kg / 0.3L携出，不是抗风雪帐篷'},
     companion:{label:'检查同伴并核对症状',t:0.3,st:-1,need:'只花时间与体力，不治疗、不提供恢复加成'},
-    wait:{label:'在已知避风处等待风雪减弱',t:1.5,st:-2,need:'必须先避风；等待不保证天气转好'},
+    wait:{label:'在已知避风处等待风雪减弱',t:1.5,st:0,need:'必须先避风；等待提高后续风减弱概率，但不保证天气转好'},
     reassess:{label:'准备在下一观察点重新评估路线',t:0.2,st:-1,need:'路线决定；不等于获准继续上升'},
     retreat:{label:'阶段下撤：准备沿已知路线回营',t:0.3,st:-1,need:'必须排最后；后续两章下降，仍需过夜及第三日归程'}
   });
@@ -3563,7 +3592,7 @@ var RouteActions=(()=>{
   return {eligible,forState};
 })();
 
-/* Five local guides: shared reference content, not a diagnostic system. */
+/* Six local guides: shared reference content, not a diagnostic system. */
 var GuideCore = (() => {
   const metadata = {assembled:'2026-11-21', status:'临床审核待完成', provenance:'沿用原有参考组织与资料主题；本次未联网核验原文，不代表组织审定。'};
   const guides = {
@@ -3571,7 +3600,8 @@ var GuideCore = (() => {
     heat:{id:'heat',title:'酷热 / 脱水',symptomAliases:['酷热','太热','高温','中暑','热','脱水','缺水','口渴','头晕','出汗','恶心','体温偏高','体温过高','体温升高','体温高'],context:{aliases:['酷热','太热','高温','中暑','暴晒','热','体温偏高','体温过高','体温升高','体温高'],note:'先确认是否有高温或活动暴露；头晕、恶心也可能有其他原因。'},dangerSigns:[{aliases:['混乱','昏倒','抽搐','倒下','意识变化'],requires:'heat'}],danger:'高温中出现混乱、昏倒或抽搐，立即降温并呼叫急救；不要等待体温计读数。',steps:['停止活动，转移阴凉处，去除多余衣物。','用湿水和扇风持续降温；清醒且能安全吞咽者少量多次补液。'],avoid:['意识异常者不喂水；不要等待体温计读数才行动。'],explanation:'中暑可损害器官，可能仍在出汗；缺水不是热病的唯一原因。',sources:['CDC《Yellow Book》· 热相关疾病','American Red Cross · 中暑急救'],equipment:['water','phone'],content:{...metadata}},
     lost:{id:'lost',title:'迷路',symptomAliases:['迷路','失联','导航','找不到路','走丢','方向不明','辨不清方向','找不到方向'],context:{aliases:[],note:'适用于无法确认路线或位置；定位点不等于安全路线。'},dangerSigns:[],danger:'天黑、恶劣天气、受伤或不能安全确认路线时尽早求助。',steps:['停下，评估危险与体力，核对离线地图和已知位置。','留在安全可识别处保暖遮蔽，联系救援并共享位置。'],avoid:['不盲目沿溪下降、不冒险穿越陌生地形；不要继续消耗电量和体力。'],explanation:'溪谷可能通向断崖、瀑布或涨水地带；手机定位不等于安全路线。',sources:['原有离线迷路指引 · 安全停留与求援（具体文献待补核）'],equipment:['map','phone','blanket'],content:{...metadata}},
     altitude:{id:'altitude',title:'高海拔',symptomAliases:['高原','高海拔','海拔','头痛','头疼','恶心','气促','静息气促'],context:{aliases:['高原','高海拔','海拔','上升后'],note:'需结合高海拔或近期上升背景；普通头痛不能直接归为高原病。',question:'是否身处高海拔或近期有明显上升？'},dangerSigns:[{aliases:['步态不稳','动作失调','意识变化','混乱','静息气促','静息呼吸困难'],requires:'altitude'}],danger:'步态不稳、意识变化或静息气促：紧急求救并尽快在帮助下安全下降，不独自行动。',steps:['出现不适停止上升，休息并由同伴观察。','恶化时在帮助下下降，联系救援。'],avoid:['不要带着症状继续攀升，不把症状归因于意志薄弱。'],explanation:'低氧可导致脑或肺水肿；体能好也不能保证不会发生。',sources:['CDC《Yellow Book》· 高海拔旅行','Wilderness Medical Society · 急性高原病临床指南'],equipment:['phone','blanket'],content:{...metadata}},
-    injury:{id:'injury',title:'受伤 / 出血',symptomAliases:['受伤','出血','流血','伤口','摔伤','摔倒','扭伤','大出血','大量出血','持续出血','血流不止','止不住血','血止不住','严重疼痛'],context:{aliases:[],note:'适用于外伤或出血；伤口外观不能排除深部损伤。'},dangerSigns:[{aliases:['大量出血','持续出血','大出血','血流不止','止不住血','血止不住','严重疼痛']}],danger:'大量或持续出血、严重疼痛、意识或呼吸异常立即求救。',steps:['先确保现场安全。','用干净敷料持续直接压迫出血处，保护伤者、保暖并寻求帮助。'],avoid:['避免不必要移动，疑似脊柱或严重骨折不强行走动；不随意拔出嵌入物。'],explanation:'失血可引起休克；外表伤口小也可能存在深部损伤。',sources:['American Red Cross · 出血急救'],equipment:['firstaid','blanket','phone'],content:{...metadata}}
+    injury:{id:'injury',title:'受伤 / 出血',symptomAliases:['受伤','出血','流血','伤口','摔伤','摔倒','扭伤','大出血','大量出血','持续出血','血流不止','止不住血','血止不住','严重疼痛'],context:{aliases:[],note:'适用于外伤或出血；伤口外观不能排除深部损伤。'},dangerSigns:[{aliases:['大量出血','持续出血','大出血','血流不止','止不住血','血止不住','严重疼痛']}],danger:'大量或持续出血、严重疼痛、意识或呼吸异常立即求救。',steps:['先确保现场安全。','用干净敷料持续直接压迫出血处，保护伤者、保暖并寻求帮助。'],avoid:['避免不必要移动，疑似脊柱或严重骨折不强行走动；不随意拔出嵌入物。'],explanation:'失血可引起休克；外表伤口小也可能存在深部损伤。',sources:['American Red Cross · 出血急救'],equipment:['firstaid','blanket','phone'],content:{...metadata}},
+    wildlife:{id:'wildlife',title:'野生动物遭遇',symptomAliases:['野生动物','遇到熊','黑熊','熊','鹿','猕猴','岩羊','藏雪鸡','雪鸡','渡鸦','动物','牦牛','大角羊'],context:{aliases:['野生动物','遇到熊','黑熊','熊','鹿','猕猴','岩羊','藏雪鸡','雪鸡','渡鸦','动物','牦牛','大角羊'],note:'不同物种反应不同；先确认距离、退路和是否有幼崽，保持可预测距离。'},dangerSigns:[{aliases:['扑过来','攻击','追逐','咬伤','撞伤','顶撞']}],danger:'动物主动逼近、扑击、追逐或造成伤害：优先保护人员、寻求急救和救援；不要为了拍摄或护食继续接近。',steps:['停止前进，保持冷静，给动物清晰的退路。','熊类避免奔跑和直视，缓慢后退并结伴；猴鹿保持距离，不投喂或触摸幼崽。','收起食物和松散物品，在安全距离外观察，按物种和现场指引选择离开或避难。'],avoid:['不投喂、不追逐、不靠近幼崽，不把动物逼入死角；防护喷雾只按当地法规和说明使用。'],explanation:'野生动物通常防御空间、幼崽或食物；无法仅凭物种判断下一秒行为。',sources:['一般野生动物安全原则 · 物种与地区差异需按当地管理部门指引核对'],equipment:['phone','firstaid'],content:{...metadata}}
   };
   const urgentSigns = ['不能呼吸','无法呼吸','没有呼吸','无呼吸','喘不过气','喘不上气','呼吸困难','呼吸异常','静息呼吸困难','静息气促','叫不醒','无法唤醒','昏迷','昏倒','昏厥','抽搐','无意识','失去意识','意识丧失','意识模糊','意识不清','意识异常','大量出血','持续出血','大出血','血流不止','止不住血','血止不住'];
   const persistentWarning = '人工整理的一般指导，不能诊断；未联网核实救援或天气。现实症状优先于模拟数值。严重意识改变、呼吸异常或大量出血：立即联系当地急救服务，提供位置、人数和症状；号码因国家而异。无意识者不要经口喂水或食物。';
@@ -3629,6 +3659,7 @@ var GuideCore = (() => {
   }
   function scenarioGuide(card, risk={}){
     if(risk.injury)return 'injury';if(risk.lost)return 'lost';
+    if(card.kind==='wildlife')return 'wildlife';
     if(card.kind==='altitude')return 'altitude';
     if(['path','night','team'].includes(card.kind))return 'lost';
     if(card.kind==='terrain')return 'injury';
@@ -5334,20 +5365,17 @@ if (typeof document !== "undefined"){
   };
   function ensureCustomScene(){
     const rows = ROUTES.custom && ROUTES.custom.rows || [];
-    SCENE_IMAGES.story.custom = rows.map((row,i) => {
+    SCENE_IMAGES.story.custom = rows.map(row => {
       const meta = CUSTOM_KINDS[row[4]];
-      const pool = meta && meta.scenes || [];
-      return pool.length ? pool[i % pool.length] : 'mountain_meadow_path';
+      return meta && meta.scene || 'mountain_meadow_path';
     });
     const first = SCENE_IMAGES.story.custom[0];
     SCENE_IMAGES.covers.custom = first ? 'assets/img/' + first + '.jpg' : 'assets/img/siguniang_cover.jpg';
     SCENE_IMAGES.weather.custom = {storm:'assets/img/whiteout.jpg',wind:'assets/img/mountain_wind_gap.jpg',clear:first ? 'assets/img/' + first + '.jpg' : 'assets/img/mountain_meadow_path.jpg'};
   }
   ensureCustomScene();
-  const storyImage = (id, leg) => {
-    const file = SCENE_IMAGES.story[id]?.[leg - 1];
-    return file ? 'assets/img/' + file + '.jpg' : null;
-  };
+  const imageFile = file => file ? 'assets/img/' + file + (file.endsWith('.png') ? '' : '.jpg') : null;
+  const storyImage = (id, leg) => imageFile(SCENE_IMAGES.story[id]?.[leg - 1]);
   function sceneInfo(id, st, card, opts = {}){
     const w = st ? Core.weatherAt(st,st.leg) : 'clear';
     let risk = st && (st.temp < 35 ? 'cold' : st.water <= .4 ? 'dry' : st.flags.lost ? 'lost' : card && card.kind === 'altitude' ? 'altitude' : null);
@@ -5357,10 +5385,10 @@ if (typeof document !== "undefined"){
     const wildlifeFiles = {
       '带犊牦牛':'wildlife_yak_calf','黑熊':'wildlife_bear_dusk','屋久猕猴':'wildlife_macaque_pack',
       '大角羊':'wildlife_bighorn_lamb','带羔大角羊':'wildlife_bighorn_lamb','渡鸦与岩松鼠':'wildlife_raven_squirrel',
-      '岩羊':'mountain_ridge_traverse','藏雪鸡':'mountain_ridge_crosswind','屋久鹿':'forest_mossy_steps','护幼母鹿':'forest_mossy_steps'
+      '岩羊':'wildlife_blue_sheep.png','藏雪鸡':'wildlife_snowcock.png','屋久鹿':'wildlife_yakushima_deer.png','护幼母鹿':'wildlife_yakushima_deer.png'
     };
     const wildlife = card && card.kind === 'wildlife'
-      ? (wildlifeFiles[species] ? 'assets/img/'+wildlifeFiles[species]+'.jpg' : ({mountain:'assets/img/mountain_ridge_crosswind.jpg',erfeng:'assets/img/mountain_ridge_crosswind.jpg',sanfeng:'assets/img/mountain_ridge_crosswind.jpg',forest:'assets/img/forest_mossy_steps.jpg',canyon:'assets/img/canyon_switchbacks.jpg'}[id]))
+      ? (wildlifeFiles[species] ? imageFile(wildlifeFiles[species]) : ({mountain:'assets/img/mountain_ridge_crosswind.jpg',erfeng:'assets/img/mountain_ridge_crosswind.jpg',sanfeng:'assets/img/mountain_ridge_crosswind.jpg',forest:'assets/img/forest_mossy_steps.jpg',canyon:'assets/img/canyon_switchbacks.jpg'}[id]))
       : null;
     // Story art stays mounted through weather so the same storm image is not reused every leg.
     const cardScene = card && typeof card.scene === 'string' ? (card.scene.includes('/') ? card.scene : 'assets/img/'+card.scene+'.jpg') : null;
@@ -5885,7 +5913,7 @@ if (typeof document !== "undefined"){
     if (f.wa) p.push("水 " + (f.wa > 0 ? "+" : "−") + Math.abs(r2(f.wa)) + "L");
     if (f.te) p.push("体温 " + (f.te > 0 ? "+" : "−") + Math.abs(r1(f.te)) + "°C");
     if (ch.needTablet) p.push("净水片 −1");
-    if (ch.detour) p.push("偏航");
+    if (ch.detour) p.push(ch.damage?"偏航；事故可额外扣6–18体力并扭伤":"偏航");
     if (ch.shelter) p.push("遮蔽");
     if (ch.cool) p.push("降温");
     if (ch.recover) p.push("处理潮湿 / 轻伤");
@@ -7593,6 +7621,7 @@ if (typeof document !== "undefined"){
         : '<div class="run-score"><span>本局综合成绩</span><b>'+record.entry.score+'</b><small>本地总榜第 '+record.rank+' 名 · 生态 '+record.entry.eco+'/100 · 已写入本机档案</small></div>')
       + '<p class="hintline">本局计划：'+esc(routeOf(st).simulation)+' 已推进至第'+st.day+'日；虚构行动累计'+st.elapsed+'h，不能由章节换算现实行走时间。</p>'
       + (st.routeId === 'custom' ? '' : '<p class="hintline">本局生命线：最低体温 '+Number(st.lowestTemp).toFixed(1)+'°C · 最低体力 '+Math.round(st.lowestStamina)+' · 触发事故 '+(st.customRiskHits||0)+' 次'+(st.lastCustomRisk?' · 最后一次：'+esc(String(st.lastCustomRisk.text).replace(/[。；;]+$/,'')):'')+'。</p>')
+      + (SNOW_ROUTES.has(st.routeId) && st.over === 'win' && st.flags.summit ? '<p class="best">已记录高点：队伍在确认窗口内完成短停，并沿已确认路线完成归途。</p>' : '')
       + (st.summitOmitted?'<p class="notice">未记录高点：'+esc(st.summitOmitted)+'。</p>':'')
       + customReportHTML(st)
       + endingEchoHTML(st)
