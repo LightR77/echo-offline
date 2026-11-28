@@ -705,7 +705,8 @@
     .play-hud .lab{font-size:8px;letter-spacing:0}
     .play-hud .val{font-size:14px;line-height:18px;height:18px}
     .play-hud .tile{padding:2px 6px}
-    #scard .decision-body{width:calc(100% - 16px);min-width:0;padding:16px 14px 14px;border-radius:24px;margin-bottom:12px}
+    #scard .decision-body{width:calc(100% - 16px);min-width:0;max-height:calc(100dvh - var(--dock-space) - 104px - env(safe-area-inset-top) - env(safe-area-inset-bottom));overflow-y:auto;overscroll-behavior:contain;scrollbar-width:none;padding:16px 14px 14px;border-radius:24px;margin-bottom:12px}
+    #scard .decision-body::-webkit-scrollbar{width:0;height:0}
     #scard .ctitle{font-size:23px;overflow-wrap:anywhere}
     #scard .ctext{font-size:15px;line-height:1.72;margin-bottom:12px;overflow-wrap:anywhere}
     #scard .choices{grid-template-columns:1fr;gap:7px;min-width:0}
@@ -729,8 +730,8 @@
     .play-hud .val{font-size:14px;line-height:18px;height:18px}
     .play-hud .lab{font-size:8px}
     .play-hud .track{display:none}
-    #scard{display:grid;grid-template-columns:minmax(0,38%) minmax(0,62%);align-items:end;gap:8px;min-height:calc(100dvh - 64px);padding:56px 8px 8px;overflow:visible}
-    #scard .decision-body{grid-column:2;width:auto;padding:12px 14px 10px;border-radius:22px;margin:0;max-height:calc(100dvh - 72px);overflow-y:auto;scrollbar-width:none;overscroll-behavior:contain}
+    #scard{display:grid;grid-template-columns:minmax(0,38%) minmax(0,62%);align-items:end;gap:8px;min-height:calc(100dvh - 64px);padding:64px 8px 8px;overflow:visible}
+    #scard .decision-body{grid-column:2;width:auto;max-height:calc(100dvh - var(--dock-space) - 72px);padding:12px 14px 10px;border-radius:22px;margin:0;overflow-y:auto;scrollbar-width:none;overscroll-behavior:contain}
     #scard .decision-body::-webkit-scrollbar{width:0;height:0}
     #scard .wx{font-size:9px;padding:2px 8px;margin-bottom:6px}
     #scard .ctitle{font-size:19px;margin-bottom:4px}
@@ -6850,7 +6851,7 @@ if (typeof document !== "undefined"){
     try {
       const t = ctx.currentTime;
       const variation=typing ? .96 + Math.random() * .08 : 1;
-      const level = (typing ? .14 : .5) * variation, bodyLevel = (typing ? .1 : .42) * variation;
+      const level = (typing ? .06 : .5) * variation, bodyLevel = (typing ? .045 : .42) * variation;
       if (!clickNoise){
         const len = Math.floor(ctx.sampleRate * .04), buf = ctx.createBuffer(1, len, ctx.sampleRate), data = buf.getChannelData(0);
         for (let i = 0; i < len; i++) data[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, 2);
@@ -8124,7 +8125,7 @@ if (typeof document !== "undefined"){
     const hud = main.querySelector('.play-hud');
     if(hud)hud.innerHTML = hudHTML(st) + trackHTML(st);
     const body = document.getElementById('decision-body');
-    if(body)body.innerHTML = legDecisionHTML(st, feedback);
+    if(body){body.innerHTML = legDecisionHTML(st, feedback);body.scrollTop = 0;}
     if(pack){pack.innerHTML = legPackHTML(st);pack.open = packOpen;}
     bindLegControls();
     syncJournalBadge();
